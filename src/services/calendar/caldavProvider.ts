@@ -38,7 +38,7 @@ export class CalDAVProvider implements CalendarProvider {
       throw new Error("CalDAV server URL cannot be parsed");
     }
 
-    this.client = new DAVClient({
+    const client = new DAVClient({
       serverUrl,
       credentials: { username, password },
       authMethod: "Basic",
@@ -47,7 +47,12 @@ export class CalDAVProvider implements CalendarProvider {
       fetch: davFetch as unknown as typeof globalThis.fetch,
     });
 
-    await this.client.login();
+    // Only cache the client after a successful login. Caching it before
+    // login() resolves would leave a half-initialized client (no `account`
+    // set) that makes tsdav throw the misleading "no account for
+    // fetchCalendars" on the next call instead of the real transport error.
+    await client.login();
+    this.client = client;
     return this.client;
   }
 
