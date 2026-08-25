@@ -1701,6 +1701,7 @@ fn parse_message(
                 mime_type,
                 size: att.len() as u32,
                 content_id: att.content_id().map(|s| s.to_string()),
+                content_location: att.content_location().map(|s| s.to_string()),
                 is_inline: att.content_disposition().map_or(false, |cd| cd.is_inline()),
             })
         })

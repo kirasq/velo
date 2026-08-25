@@ -11,10 +11,12 @@ import type { DbAttachment } from "@/services/db/attachments";
 const INLINE_PLACEHOLDER =
   "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
 
-/** Normalize a reference token (cid: or Content-Location) for map lookup. */
+/** Normalize a reference token (cid: or Content-Location) for map lookup.
+ *  Lowercased + angle-bracket stripped so `image001.png@01DD34C4`,
+ *  `<_Foxmail.1@uuid>` and the HTML `cid:` form all map to the same key. */
 function normalizeRef(ref: string): string {
-  let s = ref.trim();
-  if (s.toLowerCase().startsWith("cid:")) s = s.slice(4);
+  let s = ref.trim().toLowerCase();
+  if (s.startsWith("cid:")) s = s.slice(4);
   s = s.replace(/^[<>]+|[<>]+$/g, "").trim();
   return s;
 }
@@ -115,30 +117,35 @@ export function EmailRenderer({
       body = stripRemoteImages(body);
     }
 
-    // Replace cid: references with resolved data URIs
-    if (resolvedRefs.size > 0) {
-      body = body.replace(
-        /\bcid:([^"'\s<>)]+)/gi,
-        (match, cidRef: string) => resolvedRefs.get(normalizeRef(cidRef)) ?? match,
-      );
+    // Pass 1 — cid: references.
+    // Replace with the resolved data URI, or a neutral 1x1 placeholder when the
+    // referenced inline part couldn't be fetched. Leaving an unresolved `cid:`
+    // in the DOM makes WebKit emit "unsupported URL" against the sandboxed
+    // iframe origin, so it MUST never survive this pass.
+    body = body.replace(
+      /\bcid:([^"'\s<>)]+)/gi,
+      (_match, cidRef: string) => resolvedRefs.get(normalizeRef(cidRef)) ?? INLINE_PLACEHOLDER,
+    );
 
-      // Resolve (or neutralize) bare/relative inline image references that the
-      // email used instead of cid: (commonly Content-Location hashes). These
-      // otherwise resolve against the iframe origin and 404 / "unsupported URL".
-      body = body.replace(
-        /(<img\b[^>]*?\ssrc\s*=\s*)(["'])(.*?)\2/gi,
-        (full, pre: string, q: string, src: string) => {
-          const t = src.trim();
-          if (/^(https?:|data:|blob:|mailto:|cid:|#)/i.test(t)) return full;
-          if (t.includes("/")) return full; // base-relative remote; leave as-is
-          const dataUri = resolvedRefs.get(normalizeRef(t));
-          if (dataUri) return `${pre}${q}${dataUri}${q}`;
-          // Unresolved inline/relative image → neutral 1x1 placeholder to avoid
-          // 404 / unsupported-URL console errors.
-          return `${pre}${q}${INLINE_PLACEHOLDER}${q}`;
-        },
-      );
-    }
+    // Pass 2 — bare/relative inline image references (Content-Location hashes,
+    // filename tokens, etc.) that mailers use INSTEAD of cid:. These are not
+    // valid URLs and would otherwise resolve against the iframe origin and 404
+    // / "unsupported URL". Resolve to a data URI when we have the bytes;
+    // otherwise neutralize with a 1x1 placeholder. Runs unconditionally —
+    // emails routinely embed inline images keyed only by a bare token.
+    body = body.replace(
+      /(<img\b[^>]*?\ssrc\s*=\s*)(["'])(.*?)\2/gi,
+      (full, pre: string, q: string, src: string) => {
+        const t = src.trim();
+        if (/^(https?:|data:|blob:|mailto:|#)/i.test(t)) return full;
+        if (t.includes("/")) return full; // path-relative remote; leave as-is
+        const dataUri = resolvedRefs.get(normalizeRef(t));
+        if (dataUri) return `${pre}${q}${dataUri}${q}`;
+        // Unresolved inline/relative image → neutral 1x1 placeholder to avoid
+        // 404 / unsupported-URL console errors.
+        return `${pre}${q}${INLINE_PLACEHOLDER}${q}`;
+      },
+    );
 
     return body;
   }, [sanitizedBody, text, shouldBlock, resolvedRefs]);

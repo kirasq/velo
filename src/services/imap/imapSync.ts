@@ -156,7 +156,7 @@ export function imapMessageToParsedMessage(
     size: att.size,
     gmailAttachmentId: att.part_id, // reuse field for IMAP part ID
     contentId: att.content_id,
-    contentLocation: null,
+    contentLocation: att.content_location ?? null,
     isInline: att.is_inline,
   }));
 

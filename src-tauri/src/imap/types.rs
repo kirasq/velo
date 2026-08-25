@@ -58,6 +58,10 @@ pub struct ImapAttachment {
     pub mime_type: String,
     pub size: u32,
     pub content_id: Option<String>,
+    /// Content-Location header value (a bare URI/token). Some mailers reference
+    /// inline images via `<img src="<Content-Location>">` instead of `cid:`.
+    /// Threaded through so the renderer can resolve those references.
+    pub content_location: Option<String>,
     pub is_inline: bool,
 }
 
