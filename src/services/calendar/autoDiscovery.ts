@@ -1,3 +1,5 @@
+import { normalizeCalDavUrl } from "./caldavUrl";
+
 interface CalDavPreset {
   name: string;
   domains: string[];
@@ -144,10 +146,15 @@ export async function testCalDavConnection(
   username: string,
   password: string,
 ): Promise<{ success: boolean; message: string; calendarCount?: number }> {
+  const normalizedUrl = normalizeCalDavUrl(url);
+  if (!normalizedUrl) {
+    return { success: false, message: "Invalid CalDAV server URL" };
+  }
+
   try {
     const { DAVClient } = await import("tsdav");
     const client = new DAVClient({
-      serverUrl: url,
+      serverUrl: normalizedUrl,
       credentials: { username, password },
       authMethod: "Basic",
       defaultAccountType: "caldav",

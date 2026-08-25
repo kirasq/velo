@@ -9,6 +9,7 @@ import type {
   UpdateEventInput,
 } from "./types";
 import { generateVEvent, parseVEvent } from "./icalHelper";
+import { normalizeCalDavUrl } from "./caldavUrl";
 import { getAccount } from "@/services/db/accounts";
 
 export class CalDAVProvider implements CalendarProvider {
@@ -23,12 +24,17 @@ export class CalDAVProvider implements CalendarProvider {
     const account = await getAccount(this.accountId);
     if (!account) throw new Error("Account not found");
 
-    const serverUrl = account.caldav_url;
+    const rawServerUrl = account.caldav_url;
     const username = account.caldav_username ?? account.email;
     const password = account.caldav_password;
 
-    if (!serverUrl || !password) {
+    if (!rawServerUrl || !password) {
       throw new Error("CalDAV credentials not configured");
+    }
+
+    const serverUrl = normalizeCalDavUrl(rawServerUrl);
+    if (!serverUrl) {
+      throw new Error("CalDAV server URL cannot be parsed");
     }
 
     this.client = new DAVClient({

@@ -12,6 +12,7 @@ import { TextField } from "@/components/ui/TextField";
 import { insertCalDavAccount } from "@/services/db/accounts";
 import { useAccountStore } from "@/stores/accountStore";
 import { discoverCalDavSettings, testCalDavConnection } from "@/services/calendar/autoDiscovery";
+import { normalizeCalDavUrl } from "@/services/calendar/caldavUrl";
 
 interface AddCalDavAccountProps {
   onClose: () => void;
@@ -59,7 +60,11 @@ export function AddCalDavAccount({ onClose, onSuccess, onBack }: AddCalDavAccoun
     setTesting(true);
     setTestResult(null);
 
-    const result = await testCalDavConnection(caldavUrl, username, password);
+    const effectiveUrl = normalizeCalDavUrl(caldavUrl) ?? caldavUrl;
+    if (effectiveUrl !== caldavUrl) {
+      setCaldavUrl(effectiveUrl);
+    }
+    const result = await testCalDavConnection(effectiveUrl, username, password);
     setTestResult(result);
     setCalendarCount(result.calendarCount ?? 0);
     setTesting(false);
@@ -68,12 +73,16 @@ export function AddCalDavAccount({ onClose, onSuccess, onBack }: AddCalDavAccoun
   const handleCreate = useCallback(async () => {
     setCreating(true);
     try {
+      const effectiveUrl = normalizeCalDavUrl(caldavUrl) ?? caldavUrl;
+      if (effectiveUrl !== caldavUrl) {
+        setCaldavUrl(effectiveUrl);
+      }
       const id = crypto.randomUUID();
       await insertCalDavAccount({
         id,
         email,
         displayName: displayName || null,
-        caldavUrl,
+        caldavUrl: effectiveUrl,
         caldavUsername: username,
         caldavPassword: password,
       });
@@ -168,6 +177,12 @@ export function AddCalDavAccount({ onClose, onSuccess, onBack }: AddCalDavAccoun
               type="url"
               value={caldavUrl}
               onChange={(e) => setCaldavUrl(e.target.value)}
+              onBlur={() => {
+                const normalized = normalizeCalDavUrl(caldavUrl);
+                if (normalized && normalized !== caldavUrl) {
+                  setCaldavUrl(normalized);
+                }
+              }}
               placeholder="https://caldav.example.com/"
             />
 

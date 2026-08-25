@@ -3,6 +3,7 @@ import { Loader2, CheckCircle2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { TextField } from "@/components/ui/TextField";
 import { discoverCalDavSettings, testCalDavConnection } from "@/services/calendar/autoDiscovery";
+import { normalizeCalDavUrl } from "@/services/calendar/caldavUrl";
 import { updateAccountCalDav, type DbAccount } from "@/services/db/accounts";
 import { removeCalendarProvider } from "@/services/calendar/providerFactory";
 
@@ -20,6 +21,13 @@ export function CalDavSettings({ account, onSaved }: CalDavSettingsProps) {
   const [saving, setSaving] = useState(false);
   const [discovered, setDiscovered] = useState(false);
 
+  const applyNormalizedUrl = useCallback((raw: string) => {
+    const normalized = normalizeCalDavUrl(raw);
+    if (normalized && normalized !== raw) {
+      setCaldavUrl(normalized);
+    }
+  }, []);
+
   // Auto-discover on mount if not already configured
   useEffect(() => {
     if (!account.caldav_url && !discovered) {
@@ -33,18 +41,26 @@ export function CalDavSettings({ account, onSaved }: CalDavSettingsProps) {
   }, [account.email, account.caldav_url, discovered]);
 
   const handleTest = useCallback(async () => {
+    const effectiveUrl = normalizeCalDavUrl(caldavUrl) ?? caldavUrl;
+    if (effectiveUrl !== caldavUrl) {
+      setCaldavUrl(effectiveUrl);
+    }
     setTesting(true);
     setTestResult(null);
-    const result = await testCalDavConnection(caldavUrl, username, password);
+    const result = await testCalDavConnection(effectiveUrl, username, password);
     setTestResult(result);
     setTesting(false);
   }, [caldavUrl, username, password]);
 
   const handleSave = useCallback(async () => {
+    const effectiveUrl = normalizeCalDavUrl(caldavUrl) ?? caldavUrl;
+    if (effectiveUrl !== caldavUrl) {
+      setCaldavUrl(effectiveUrl);
+    }
     setSaving(true);
     try {
       await updateAccountCalDav(account.id, {
-        caldavUrl,
+        caldavUrl: effectiveUrl,
         caldavUsername: username,
         caldavPassword: password,
         calendarProvider: "caldav",
@@ -97,6 +113,7 @@ export function CalDavSettings({ account, onSaved }: CalDavSettingsProps) {
         type="url"
         value={caldavUrl}
         onChange={(e) => setCaldavUrl(e.target.value)}
+        onBlur={() => applyNormalizedUrl(caldavUrl)}
         placeholder="https://caldav.example.com/"
       />
 
