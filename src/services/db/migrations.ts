@@ -876,33 +876,32 @@ export async function runMigrations(): Promise<void> {
     // Split SQL into individual statements, respecting BEGIN...END blocks
     const statements = splitStatements(migration.sql);
 
-    // Use a transaction so migrations are all-or-nothing
-    await db.execute("BEGIN");
-    try {
-      for (const statement of statements) {
-        try {
-          await db.execute(statement);
-        } catch (err) {
-          // Tolerate "duplicate column" errors from ALTER TABLE ADD COLUMN
-          // in case a migration was partially applied previously
-          const msg = err instanceof Error ? err.message : String(err);
-          if (msg.includes("duplicate column")) {
-            console.warn(`Skipping duplicate column in v${migration.version}: ${msg}`);
-          } else {
-            throw err;
-          }
+    // NOTE: Do NOT wrap in a manual BEGIN/COMMIT. `@tauri-apps/plugin-sql`
+    // serves a 10-connection sqlx pool with no transaction affinity, so a
+    // `BEGIN` on one borrowed connection and the statements on others would
+    // (a) never be atomic and (b) leave the BEGIN connection's transaction
+    // open, poisoning the pool and causing SQLITE_BUSY (code 5) on later
+    // writes. Each statement runs in its own autocommit; partial re-application
+    // is already tolerated below via the "duplicate column" handling.
+    for (const statement of statements) {
+      try {
+        await db.execute(statement);
+      } catch (err) {
+        // Tolerate "duplicate column" errors from ALTER TABLE ADD COLUMN
+        // in case a migration was partially applied previously
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("duplicate column")) {
+          console.warn(`Skipping duplicate column in v${migration.version}: ${msg}`);
+        } else {
+          throw err;
         }
       }
-
-      await db.execute(
-        "INSERT OR IGNORE INTO _migrations (version, description) VALUES ($1, $2)",
-        [migration.version, migration.description],
-      );
-      await db.execute("COMMIT");
-    } catch (err) {
-      await db.execute("ROLLBACK").catch(() => {});
-      throw err;
     }
+
+    await db.execute(
+      "INSERT OR IGNORE INTO _migrations (version, description) VALUES ($1, $2)",
+      [migration.version, migration.description],
+    );
   }
 
   console.log("All migrations applied.");

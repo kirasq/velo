@@ -20,7 +20,10 @@ describe("withTransaction", () => {
     mockExecute.mockResolvedValue(undefined);
   });
 
-  it("executes BEGIN, callback, COMMIT in order", async () => {
+  it("runs the callback without issuing a manual BEGIN/COMMIT", async () => {
+    // The sqlx pool has no transaction affinity, so we deliberately avoid
+    // manual BEGIN/COMMIT (they would poison the pool). The callback should
+    // just run as-is.
     const callOrder: string[] = [];
     mockExecute.mockImplementation(async (sql: string) => {
       callOrder.push(sql);
@@ -28,52 +31,31 @@ describe("withTransaction", () => {
 
     await withTransaction(async () => {
       callOrder.push("callback");
+      await mockExecute("UPDATE messages SET is_read = 1");
     });
 
-    expect(callOrder).toEqual(["BEGIN TRANSACTION", "callback", "COMMIT"]);
+    // getDb() runs setup PRAGMAs on first init; ignore those for ordering.
+    const userCalls = callOrder.filter((s) => !s.startsWith("PRAGMA"));
+    expect(userCalls).toEqual(["callback", "UPDATE messages SET is_read = 1"]);
+    // No manual transaction statements should ever be issued.
+    expect(callOrder.some((s) => s === "BEGIN" || s === "COMMIT" || s === "ROLLBACK")).toBe(false);
   });
 
-  it("rolls back on callback error", async () => {
-    const callOrder: string[] = [];
-    mockExecute.mockImplementation(async (sql: string) => {
-      callOrder.push(sql);
-    });
-
+  it("propagates callback errors", async () => {
     await expect(
       withTransaction(async () => {
         throw new Error("callback failed");
       }),
     ).rejects.toThrow("callback failed");
-
-    expect(callOrder).toEqual(["BEGIN TRANSACTION", "ROLLBACK"]);
   });
 
-  it("handles ROLLBACK failure gracefully (SQLite auto-rollback)", async () => {
-    mockExecute.mockImplementation(async (sql: string) => {
-      if (sql === "ROLLBACK") {
-        throw new Error("cannot rollback - no transaction is active");
-      }
-    });
-
-    // Should still throw the original error, not the ROLLBACK error
-    await expect(
-      withTransaction(async () => {
-        throw new Error("original error");
-      }),
-    ).rejects.toThrow("original error");
-  });
-
-  it("serialises concurrent transactions via mutex", async () => {
+  it("serialises concurrent transactions via the global mutex", async () => {
     const executionLog: string[] = [];
 
-    mockExecute.mockImplementation(async (sql: string) => {
-      executionLog.push(sql);
-    });
-
-    // Launch two transactions concurrently
+    // tx1 and tx2 are launched concurrently; the mutex must make tx2 wait
+    // until tx1 has fully finished.
     const tx1 = withTransaction(async () => {
       executionLog.push("tx1-work");
-      // Simulate async work
       await new Promise((r) => setTimeout(r, 10));
       executionLog.push("tx1-done");
     });
@@ -84,31 +66,21 @@ describe("withTransaction", () => {
 
     await Promise.all([tx1, tx2]);
 
-    // tx1 should fully complete (BEGIN, work, done, COMMIT) before tx2 starts
-    const tx1BeginIdx = executionLog.indexOf("BEGIN TRANSACTION");
-    const tx1CommitIdx = executionLog.indexOf("COMMIT");
-    const tx2BeginIdx = executionLog.lastIndexOf("BEGIN TRANSACTION");
+    const tx1WorkIdx = executionLog.indexOf("tx1-work");
+    const tx1DoneIdx = executionLog.indexOf("tx1-done");
+    const tx2WorkIdx = executionLog.indexOf("tx2-work");
 
-    expect(tx1BeginIdx).toBeLessThan(tx1CommitIdx);
-    expect(tx1CommitIdx).toBeLessThan(tx2BeginIdx);
+    expect(tx1WorkIdx).toBeLessThan(tx1DoneIdx);
+    expect(tx1DoneIdx).toBeLessThan(tx2WorkIdx);
   });
 
-  it("unblocks next transaction even if current one fails", async () => {
-    mockExecute.mockImplementation(async (sql: string) => {
-      if (sql === "ROLLBACK") {
-        // Simulate auto-rollback already happened
-        throw new Error("cannot rollback - no transaction is active");
-      }
-    });
-
-    // First transaction fails
+  it("unblocks the next transaction even if the current one fails", async () => {
     const tx1 = withTransaction(async () => {
       throw new Error("tx1 failed");
     }).catch(() => {
       /* expected */
     });
 
-    // Second transaction should still run
     let tx2Ran = false;
     const tx2 = withTransaction(async () => {
       tx2Ran = true;
@@ -121,9 +93,18 @@ describe("withTransaction", () => {
 });
 
 describe("getDb", () => {
-  it("returns the same instance on repeated calls", async () => {
+  it("returns the same (wrapped) instance on repeated calls", async () => {
     const db1 = await getDb();
     const db2 = await getDb();
     expect(db1).toBe(db2);
+  });
+
+  it("funnels execute/select through the serialization queue", async () => {
+    const db = await getDb();
+    // Every DB method call should arrive at the underlying mock.
+    await db.execute("SELECT 1");
+    await db.select("SELECT 1");
+    expect(mockExecute).toHaveBeenCalledWith("SELECT 1", undefined);
+    expect(mockSelect).toHaveBeenCalledWith("SELECT 1", undefined);
   });
 });
