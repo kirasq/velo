@@ -1,25 +1,87 @@
 import Database from "@tauri-apps/plugin-sql";
 
-let db: Database | null = null;
+let rawDb: Database | null = null;
+let wrappedDb: Database | null = null;
+
+/**
+ * Global serialization queue for ALL SQLite access (reads AND writes).
+ *
+ * Why this exists:
+ * `@tauri-apps/plugin-sql` (v2.3.2) opens an sqlx connection pool of 10
+ * connections with NO busy_timeout and NO per-connection pragma hook. Two
+ * consequences:
+ *   1. `PRAGMA busy_timeout` set once in `getDb()` only applies to whichever
+ *      single connection happened to be borrowed — the other 9 stay at the
+ *      default `busy_timeout = 0`, so the next writer fails immediately with
+ *      SQLITE_BUSY (code 5) instead of waiting.
+ *   2. A manual JS `BEGIN` / `COMMIT` wraps statements that the pool spreads
+ *      across DIFFERENT physical connections, so the "transaction" never
+ *      actually covers its own writes and the dangling `BEGIN` connection
+ *      contends for the write lock at `COMMIT` time -> BUSY / deadlock.
+ *
+ * The fix is to serialize every DB call on a single async chain. With at most
+ * one operation in flight, the pool keeps reusing the same hot connection, so
+ * the once-set pragmas (WAL / busy_timeout / foreign_keys) stay effective, and
+ * there is never a second writer to contend with. Writes use autocommit
+ * (idempotent upserts), which is safe for our sync flows.
+ */
+let serialTail: Promise<void> = Promise.resolve();
+
+function serialize<T>(op: () => Promise<T>): Promise<T> {
+  // Run `op` strictly after the previous operation settles (success OR failure).
+  const next = serialTail.then(op, op);
+  // Keep the chain alive even if `op` rejects, without swallowing the error:
+  // `next` still rejects for its own caller, we only detach the tail.
+  serialTail = next.then(
+    () => undefined,
+    () => undefined,
+  );
+  return next;
+}
+
+/**
+ * Wrap a raw Database so that `execute` / `select` (and any batch variants)
+ * are funneled through the global serialization queue. This is what makes the
+ * connection-pool busy_timeout problem disappear without touching the library.
+ */
+function wrapDb(raw: Database): Database {
+  const wrapped: any = Object.create(raw);
+
+  wrapped.execute = (sql: string, params?: unknown[]) =>
+    serialize(() => raw.execute(sql, params));
+
+  wrapped.select = function <T = unknown>(sql: string, params?: unknown[]) {
+    return serialize(() => raw.select<T>(sql, params));
+  };
+
+  for (const name of ["selectObject", "executeBatch", "batchExecute"]) {
+    const fn = (raw as any)[name];
+    if (typeof fn === "function") {
+      wrapped[name] = (sql: string, params?: unknown[]) =>
+        serialize(() => fn.call(raw, sql, params));
+    }
+  }
+
+  return wrapped as Database;
+}
 
 export async function getDb(): Promise<Database> {
-  if (!db) {
-    db = await Database.load("sqlite:velo.db");
-    // Mitigate SQLITE_BUSY (code 5): the underlying sqlx pool opens multiple
-    // connections with no busy_timeout and the default (delete) journal mode,
-    // so concurrent reads/writes contend and writes fail immediately.
-    // - WAL: readers never block the writer (persistent, file-level)
-    // - busy_timeout: brief write contention waits instead of erroring
-    // - synchronous=NORMAL: safe with WAL, avoids fsync stalls on commit
+  if (!wrappedDb) {
+    rawDb = await Database.load("sqlite:velo.db");
+    // Best-effort pragmas. With the global serialization queue keeping a single
+    // connection hot, these connection-level settings remain effective for the
+    // life of the app. journal_mode=WAL is file-level and persists regardless.
     try {
-      await db.execute("PRAGMA journal_mode = WAL", []);
-      await db.execute("PRAGMA busy_timeout = 10000", []);
-      await db.execute("PRAGMA synchronous = NORMAL", []);
+      await rawDb.execute("PRAGMA journal_mode = WAL", []);
+      await rawDb.execute("PRAGMA busy_timeout = 10000", []);
+      await rawDb.execute("PRAGMA synchronous = NORMAL", []);
+      await rawDb.execute("PRAGMA foreign_keys = ON", []);
     } catch {
       // pragmas are best-effort; never block DB load
     }
+    wrappedDb = wrapDb(rawDb);
   }
-  return db;
+  return wrappedDb;
 }
 
 /**
@@ -51,47 +113,19 @@ export function buildDynamicUpdate(
 }
 
 /**
- * Simple async mutex to prevent concurrent SQLite transactions.
- * SQLite only supports one writer at a time; overlapping BEGIN/COMMIT/ROLLBACK
- * on the same connection causes "cannot start a transaction within a transaction"
- * or "database is locked" errors.
+ * Run a batch of writes as a serialized unit. We intentionally do NOT use a
+ * manual `BEGIN`/`COMMIT`: under the sqlx pool those statements land on
+ * different physical connections (see the note on `serialize` above), so they
+ * neither provide atomicity nor help — they only create lock contention. The
+ * global serialization queue guarantees no other operation interleaves, which
+ * is the real isolation we need. Idempotent upserts make the loss of
+ * statement-level rollback acceptable for our sync flows.
  */
-let txQueue: Promise<void> = Promise.resolve();
-
-export async function withTransaction(fn: (db: Database) => Promise<void>): Promise<void> {
-  // Queue this transaction behind any currently-running one.
-  // This serialises all transactions without blocking non-transactional reads.
-  const prev = txQueue;
-  let resolve!: () => void;
-  txQueue = new Promise<void>((r) => {
-    resolve = r;
-  });
-
-  try {
-    await prev; // wait for previous transaction to finish
-  } catch {
-    // previous transaction errored — that's fine, we can still proceed
-  }
-
+export async function withTransaction(
+  fn: (db: Database) => Promise<void>,
+): Promise<void> {
   const database = await getDb();
-  try {
-    await database.execute("BEGIN TRANSACTION", []);
-    try {
-      await fn(database);
-      await database.execute("COMMIT", []);
-    } catch (err) {
-      // SQLite may auto-rollback on certain errors — guard against
-      // "cannot rollback - no transaction is active"
-      try {
-        await database.execute("ROLLBACK", []);
-      } catch {
-        // ROLLBACK failed (already rolled back) — safe to ignore
-      }
-      throw err;
-    }
-  } finally {
-    resolve(); // always unblock the next queued transaction
-  }
+  await serialize(() => fn(database));
 }
 
 /**
