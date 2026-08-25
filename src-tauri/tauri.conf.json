@@ -39,7 +39,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' https: http: wss:; img-src 'self' data: https://www.gravatar.com https://lh3.googleusercontent.com https://*.googleusercontent.com; font-src 'self' data:; frame-src 'self'"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost https: http: wss:; img-src 'self' asset: http://asset.localhost data: https://www.gravatar.com https://lh3.googleusercontent.com https://*.googleusercontent.com; font-src 'self' data:; frame-src 'self'"
     },
     "trayIcon": null
   },
