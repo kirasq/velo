@@ -58,6 +58,7 @@ function pop3MessageToParsed(
       size: att.size,
       gmailAttachmentId: attId,
       contentId: normalizeCid(att.content_id),
+      contentLocation: att.content_location ?? null,
       isInline: att.is_inline,
       localPath: att.local_path ?? null,
     };
@@ -203,6 +204,7 @@ export async function pop3InitialSync(
               size: att.size,
               gmailAttachmentId: att.gmailAttachmentId,
               contentId: att.contentId,
+              contentLocation: att.contentLocation,
               isInline: att.isInline,
               localPath: att.localPath,
             });

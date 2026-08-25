@@ -17,6 +17,8 @@ export interface Pop3Attachment {
   mime_type: string;
   size: number;
   content_id: string | null;
+  /** Content-Location header value (bare URI/token) for inline image refs. */
+  content_location?: string | null;
   is_inline: boolean;
   /** Absolute path on disk where the decoded bytes are stored (POP3 only). */
   local_path?: string | null;

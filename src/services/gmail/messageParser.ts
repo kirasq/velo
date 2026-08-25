@@ -9,6 +9,8 @@ export interface ParsedAttachment {
   contentId: string | null;
   isInline: boolean;
   localPath?: string | null;
+  /** Content-Location header value (bare URI/token) for inline image refs. */
+  contentLocation?: string | null;
 }
 
 export interface ParsedMessage {
@@ -128,6 +130,9 @@ function collectAttachments(part: GmailMessagePart, results: ParsedAttachment[])
     const contentIdHeader = part.headers?.find(
       (h) => h.name.toLowerCase() === "content-id",
     );
+    const contentLocationHeader = part.headers?.find(
+      (h) => h.name.toLowerCase() === "content-location",
+    );
     const contentDisposition = part.headers?.find(
       (h) => h.name.toLowerCase() === "content-disposition",
     );
@@ -143,6 +148,7 @@ function collectAttachments(part: GmailMessagePart, results: ParsedAttachment[])
         size: part.body.size,
         gmailAttachmentId: part.body.attachmentId,
         contentId: contentIdHeader?.value?.replace(/[<>]/g, "") ?? null,
+        contentLocation: contentLocationHeader?.value?.trim() ?? null,
         isInline: isInline && !hasFilename,
       });
     }

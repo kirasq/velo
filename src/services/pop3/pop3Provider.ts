@@ -173,8 +173,9 @@ export class Pop3Provider implements EmailProvider {
       mime_type: string;
       size: number;
       content_id: string | null;
+      content_location: string | null;
       is_inline: number;
-    }[]>("SELECT id, filename, mime_type, size, content_id, is_inline FROM attachments WHERE message_id = $1", [messageId]);
+    }[]>("SELECT id, filename, mime_type, size, content_id, content_location, is_inline FROM attachments WHERE message_id = $1", [messageId]);
 
     return {
       id: row.id,
@@ -202,6 +203,7 @@ export class Pop3Provider implements EmailProvider {
         size: a.size,
         gmailAttachmentId: a.id,
         contentId: a.content_id,
+        contentLocation: a.content_location,
         isInline: !!a.is_inline,
       })),
       listUnsubscribe: row.list_unsubscribe,

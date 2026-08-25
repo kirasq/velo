@@ -61,16 +61,26 @@ export const MessageItem = memo(forwardRef<HTMLDivElement, MessageItemProps>(fun
     }
   };
 
-  // Scan HTML body for cid: references — these images are already rendered inline
+  // Scan HTML body for inline resource references — both `cid:` and bare-token
+  // (Content-Location) references — so the renderer can resolve them and the
+  // file-attachment list can skip them (avoid double-listing inline images).
   const referencedCids = useMemo(() => {
-    const cids = new Set<string>();
-    if (!message.body_html) return cids;
-    const regex = /\bcid:([^"'\s)]+)/gi;
+    const refs = new Set<string>();
+    if (!message.body_html) return refs;
+    const cidRegex = /\bcid:([^"'\s<>)]+)/gi;
     let m;
-    while ((m = regex.exec(message.body_html)) !== null) {
-      cids.add(m[1]!);
+    while ((m = cidRegex.exec(message.body_html)) !== null) {
+      refs.add(m[1]!);
     }
-    return cids;
+    // Bare-token img srcs (e.g. Content-Location hashes) with no scheme and no "/"
+    const srcRegex = /<img\b[^>]*\ssrc\s*=\s*["']([^"']*?)["']/gi;
+    while ((m = srcRegex.exec(message.body_html)) !== null) {
+      const src = m[1]!.trim();
+      if (!/^(https?:|data:|blob:|mailto:|cid:|#)/i.test(src) && !src.includes("/")) {
+        refs.add(src);
+      }
+    }
+    return refs;
   }, [message.body_html]);
 
   const fromDisplay = message.from_name ?? message.from_address ?? "Unknown";
@@ -143,7 +153,7 @@ export const MessageItem = memo(forwardRef<HTMLDivElement, MessageItemProps>(fun
               accountId={message.account_id}
               senderAllowlisted={senderAllowlisted}
               messageId={message.id}
-              inlineAttachments={attachments.filter((a) => a.content_id)}
+              inlineAttachments={attachments.filter((a) => a.content_id || a.content_location)}
             />
           ) : (
             <div className="py-8 text-center text-text-tertiary text-sm">Loading...</div>

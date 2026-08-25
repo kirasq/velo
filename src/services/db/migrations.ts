@@ -787,6 +787,14 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_messages_pop3_uidl ON messages(account_id, pop3_uidl);
     `,
   },
+  {
+    version: 25,
+    description: "Add content_location to attachments (inline image Content-Location refs)",
+    sql: `
+      ALTER TABLE attachments ADD COLUMN content_location TEXT;
+      CREATE INDEX IF NOT EXISTS idx_attachments_content_location ON attachments(content_location);
+    `,
+  },
 ];
 
 /**

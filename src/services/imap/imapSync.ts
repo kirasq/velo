@@ -156,6 +156,7 @@ export function imapMessageToParsedMessage(
     size: att.size,
     gmailAttachmentId: att.part_id, // reuse field for IMAP part ID
     contentId: att.content_id,
+    contentLocation: null,
     isInline: att.is_inline,
   }));
 
@@ -332,6 +333,7 @@ async function storeThreadsAndMessages(
               size: att.size,
               gmailAttachmentId: att.gmailAttachmentId,
               contentId: att.contentId,
+              contentLocation: att.contentLocation,
               isInline: att.isInline,
             });
           }
@@ -600,6 +602,7 @@ export async function imapInitialSync(
                   size: att.size,
                   gmailAttachmentId: att.gmailAttachmentId,
                   contentId: att.contentId,
+                  contentLocation: att.contentLocation,
                   isInline: att.isInline,
                 });
               }

@@ -525,6 +525,7 @@ pub fn parse_message(uidl: &str, raw: &[u8], attachment_dir: &str) -> Result<Pop
             })
             .unwrap_or_else(|| "application/octet-stream".to_string());
         let content_id = att.content_id().map(|s| s.to_string());
+        let content_location = att.content_location().map(|s| s.to_string());
         let is_inline = att
             .content_disposition()
             .map_or(false, |d| d.ctype().eq_ignore_ascii_case("inline"));
@@ -552,6 +553,7 @@ pub fn parse_message(uidl: &str, raw: &[u8], attachment_dir: &str) -> Result<Pop
             mime_type,
             size,
             content_id,
+            content_location,
             is_inline,
             local_path,
         });

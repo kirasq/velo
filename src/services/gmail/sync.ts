@@ -145,6 +145,7 @@ async function processAndStoreThread(
         size: att.size,
         gmailAttachmentId: att.gmailAttachmentId,
         contentId: att.contentId,
+        contentLocation: att.contentLocation,
         isInline: att.isInline,
       }),
     ));

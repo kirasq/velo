@@ -30,8 +30,9 @@ export function AttachmentList({ accountId, messageId, attachments, referencedCi
 
   // Filter out CID images rendered in the email body and true inline parts, then dedup
   const fileAttachments = dedup(attachments.filter((a) => {
-    // Skip attachments whose CID is referenced in the email body (already rendered inline)
+    // Skip attachments referenced inline in the email body (cid: or Content-Location)
     if (a.content_id && referencedCids?.has(a.content_id)) return false;
+    if (a.content_location && referencedCids?.has(a.content_location)) return false;
     // True inline: marked inline with no filename
     if (a.is_inline && !a.filename) return false;
     return true;

@@ -7,6 +7,18 @@ import { escapeHtml, sanitizeHtml } from "@/utils/sanitize";
 import { useUIStore } from "@/stores/uiStore";
 import type { DbAttachment } from "@/services/db/attachments";
 
+/** 1x1 transparent GIF — neutral fallback for unresolved inline images. */
+const INLINE_PLACEHOLDER =
+  "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+
+/** Normalize a reference token (cid: or Content-Location) for map lookup. */
+function normalizeRef(ref: string): string {
+  let s = ref.trim();
+  if (s.toLowerCase().startsWith("cid:")) s = s.slice(4);
+  s = s.replace(/^[<>]+|[<>]+$/g, "").trim();
+  return s;
+}
+
 interface EmailRendererProps {
   html: string | null;
   text: string | null;
@@ -32,7 +44,7 @@ export function EmailRenderer({
   const observerRef = useRef<ResizeObserver | null>(null);
   const rafRef = useRef<number>(0);
   const [overrideShow, setOverrideShow] = useState(false);
-  const [cidMap, setCidMap] = useState<Map<string, string>>(new Map());
+  const [resolvedRefs, setResolvedRefs] = useState<Map<string, string>>(new Map());
 
   const theme = useUIStore((s) => s.theme);
   const isDark = theme === "dark"
@@ -40,14 +52,15 @@ export function EmailRenderer({
 
   const shouldBlock = blockImages && !senderAllowlisted && !overrideShow;
 
-  // Resolve cid: references by fetching inline attachment data
+  // Resolve inline attachment references (cid: AND Content-Location/bare-token)
+  // to data URIs by fetching attachment bytes from the local cache.
   useEffect(() => {
     if (!accountId || !messageId || !inlineAttachments?.length) return;
 
-    const cidAttachments = inlineAttachments.filter(
-      (a) => a.content_id && a.gmail_attachment_id,
+    const refs = inlineAttachments.filter(
+      (a) => a.gmail_attachment_id && (a.content_id || a.content_location || a.filename),
     );
-    if (cidAttachments.length === 0) return;
+    if (refs.length === 0) return;
 
     let cancelled = false;
 
@@ -58,22 +71,25 @@ export function EmailRenderer({
         const resolved = new Map<string, string>();
 
         await Promise.all(
-          cidAttachments.map(async (att) => {
+          refs.map(async (att) => {
             try {
               const response = await provider.fetchAttachment(
                 messageId,
                 att.gmail_attachment_id!,
               );
               const base64 = response.data.replace(/-/g, "+").replace(/_/g, "/");
-              resolved.set(att.content_id!, `data:${att.mime_type ?? "image/png"};base64,${base64}`);
+              const dataUri = `data:${att.mime_type ?? "image/png"};base64,${base64}`;
+              if (att.content_id) resolved.set(normalizeRef(att.content_id), dataUri);
+              if (att.content_location) resolved.set(normalizeRef(att.content_location), dataUri);
+              if (att.filename) resolved.set(att.filename, dataUri);
             } catch {
-              // Skip individual failures
+              // Skip individual failures — unresolved refs fall back to placeholder
             }
           }),
         );
 
         if (!cancelled && resolved.size > 0) {
-          setCidMap(resolved);
+          setResolvedRefs(resolved);
         }
       } catch {
         // Non-critical — images just won't render
@@ -100,15 +116,32 @@ export function EmailRenderer({
     }
 
     // Replace cid: references with resolved data URIs
-    if (cidMap.size > 0) {
+    if (resolvedRefs.size > 0) {
       body = body.replace(
-        /\bcid:([^"'\s)]+)/gi,
-        (match, cidRef: string) => cidMap.get(cidRef) ?? match,
+        /\bcid:([^"'\s<>)]+)/gi,
+        (match, cidRef: string) => resolvedRefs.get(normalizeRef(cidRef)) ?? match,
+      );
+
+      // Resolve (or neutralize) bare/relative inline image references that the
+      // email used instead of cid: (commonly Content-Location hashes). These
+      // otherwise resolve against the iframe origin and 404 / "unsupported URL".
+      body = body.replace(
+        /(<img\b[^>]*?\ssrc\s*=\s*)(["'])(.*?)\2/gi,
+        (full, pre: string, q: string, src: string) => {
+          const t = src.trim();
+          if (/^(https?:|data:|blob:|mailto:|cid:|#)/i.test(t)) return full;
+          if (t.includes("/")) return full; // base-relative remote; leave as-is
+          const dataUri = resolvedRefs.get(normalizeRef(t));
+          if (dataUri) return `${pre}${q}${dataUri}${q}`;
+          // Unresolved inline/relative image → neutral 1x1 placeholder to avoid
+          // 404 / unsupported-URL console errors.
+          return `${pre}${q}${INLINE_PLACEHOLDER}${q}`;
+        },
       );
     }
 
     return body;
-  }, [sanitizedBody, text, shouldBlock, cidMap]);
+  }, [sanitizedBody, text, shouldBlock, resolvedRefs]);
 
   const blocked = useMemo(() => {
     if (!shouldBlock || !sanitizedBody) return false;

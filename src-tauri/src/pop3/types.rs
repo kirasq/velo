@@ -80,6 +80,10 @@ pub struct Pop3Attachment {
     pub mime_type: String,
     pub size: u32,
     pub content_id: Option<String>,
+    /// Content-Location header value (a bare URI/token). Some mailers reference
+    /// inline images via `<img src="<Content-Location>">` instead of `cid:`.
+    /// Stored so the renderer can resolve those references to inline data.
+    pub content_location: Option<String>,
     pub is_inline: bool,
     /// Absolute path on disk where the decoded attachment bytes are stored.
     /// `None` when disk persistence failed or attachments are not saved locally.

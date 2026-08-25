@@ -9,6 +9,7 @@ export interface DbAttachment {
   size: number | null;
   gmail_attachment_id: string | null;
   content_id: string | null;
+  content_location: string | null;
   is_inline: number;
   local_path: string | null;
 }
@@ -22,16 +23,17 @@ export async function upsertAttachment(att: {
   size: number | null;
   gmailAttachmentId:  string | null;
   contentId: string | null;
+  contentLocation?: string | null;
   isInline: boolean;
   localPath?: string | null;
 }): Promise<void> {
   const db = await getDb();
   await db.execute(
-    `INSERT INTO attachments (id, message_id, account_id, filename, mime_type, size, gmail_attachment_id, content_id, is_inline, local_path)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    `INSERT INTO attachments (id, message_id, account_id, filename, mime_type, size, gmail_attachment_id, content_id, content_location, is_inline, local_path)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
      ON CONFLICT(id) DO UPDATE SET
        filename = $4, mime_type = $5, size = $6,
-       gmail_attachment_id = $7, content_id = $8, is_inline = $9, local_path = $10`,
+       gmail_attachment_id = $7, content_id = $8, content_location = $9, is_inline = $10, local_path = $11`,
     [
       att.id,
       att.messageId,
@@ -41,6 +43,7 @@ export async function upsertAttachment(att: {
       att.size,
       att.gmailAttachmentId,
       att.contentId,
+      att.contentLocation ?? null,
       att.isInline ? 1 : 0,
       att.localPath ?? null,
     ],
@@ -56,6 +59,7 @@ export interface AttachmentWithContext {
   size: number | null;
   gmail_attachment_id: string | null;
   content_id: string | null;
+  content_location: string | null;
   is_inline: number;
   local_path: string | null;
   from_address: string | null;

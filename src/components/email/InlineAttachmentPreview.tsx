@@ -32,8 +32,9 @@ export function InlineAttachmentPreview({
 }: InlineAttachmentPreviewProps) {
   // Filter to previewable non-inline attachments, dedup, exclude CID-referenced
   const previewableAttachments = dedup(attachments.filter((a) => {
-    // Skip attachments whose CID is referenced in the email body
+    // Skip attachments referenced inline in the email body (cid: or Content-Location)
     if (a.content_id && referencedCids?.has(a.content_id)) return false;
+    if (a.content_location && referencedCids?.has(a.content_location)) return false;
     if (a.is_inline && !a.filename) return false;
     return isImage(a.mime_type) || isPdf(a.mime_type, a.filename);
   }));
