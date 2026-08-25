@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.4.22](https://github.com/kirasq/velo/compare/velo-v0.4.21...velo-v0.4.22) (2026-08-25)
+
+
+### Features
+
+* **caldav:** 新增 dav_diag 模块——分级连通性诊断(DNS→TCP→TLS→HTTP)、结构化错误分类与可配置重试 ([10168c7](https://github.com/kirasq/velo/commit/10168c7e2083dd08ad4eef1e01b7f7e854147afd))
+* **calendar:** 邮件会议邀请卡片 + 一键接受/回写 (IMAP & POP3) ([9580c47](https://github.com/kirasq/velo/commit/9580c471742c85083894625103ca6074f9472316))
+* **settings:** 放开 POP3 账户的 CalDAV 日历配置入口 ([655fb01](https://github.com/kirasq/velo/commit/655fb015834188e7f8f7aa4a771a792b1b6a0a45))
+
+
+### Bug Fixes
+
+* **caldav:** Rust DavResponse 字段 status_text 序列化为 camelCase(statusText)，修正诊断中 statusText 始终为 undefined ([930fd95](https://github.com/kirasq/velo/commit/930fd9576623ea5304bb7dc5e5af19600f96a995))
+* **caldav:** 仅登录成功后缓存 client，避免失败客户端导致 tsdav 误报 'no account for fetchCalendars' ([0e9dfe5](https://github.com/kirasq/velo/commit/0e9dfe56ebdeb9d340a1998044df4d8f34be2a21))
+* **caldav:** 修正 dav_request 参数形状（包裹 req: 键），真根因修复 CalDAV 自 v0.4.35 起从未连通 ([7544611](https://github.com/kirasq/velo/commit/75446118b2143652a278c38f7ae17a715a357827))
+* **caldav:** 日历事件 timeRange 查询失败回退全量拉取 + 暴露真实加载错误 ([ad3aa60](https://github.com/kirasq/velo/commit/ad3aa60ae5e51f101c7fc4cf0a12f6cfcc7a309e))
+* **caldav:** 暴露真实连接错误 + 预检 OPTIONS 探测，根治 'Connection failed' 盲区 ([08bc51e](https://github.com/kirasq/velo/commit/08bc51e5cd75e5cdbf11f0e229e2c4d87afffab9))
+* **caldav:** 经 Rust 端 dav_request 代理 CalDAV 流量，根治 WebView CORS 拦截 ([e0fc375](https://github.com/kirasq/velo/commit/e0fc37535dbd1ff488e9128a3da2b68f34f72c21))
+* **caldav:** 规范化 CalDAV URL（缺 scheme 时补 https://），根治 well-known/caldav 解析失败 ([5048f24](https://github.com/kirasq/velo/commit/5048f24784a1fea8c494ab8a0a769b5eb96136d6))
+* **db:** 修复 POP3 同步写入因 SQLITE_BUSY/超时导致整批 0 落库\n\n- connection.ts: busy_timeout 10s→30s；execute/select 加 SQLITE_BUSY/locked/timeout 指数退避重试(最多6次)\n- pop3Sync: 每条消息写入隔离到 try/catch，单条失败只跳过该条而非整批回滚；仅持久化成功的消息进入 stored\n- bump 0.4.29 ([429f402](https://github.com/kirasq/velo/commit/429f4028942a0152b7ebd390b951fd70c22814a7))
+* **db:** 修复嵌套串行锁死锁，恢复同步与设置页可用 ([fa84c87](https://github.com/kirasq/velo/commit/fa84c87d4dff5dbb47b49cd1d5624497243b6744))
+* **db:** 全局串行化所有 SQLite 访问，修复 SQLITE_BUSY (code 5) ([78049cd](https://github.com/kirasq/velo/commit/78049cd8c7d0755b184a33ac6038d7f3cbd85204))
+* **db:** 移除 migrations 手动事务，消除连接池污染导致的 SQLITE_BUSY (code 5) ([eb0e4b5](https://github.com/kirasq/velo/commit/eb0e4b5127e8045ccc0d68845b1148e538ddb9b2))
+* **email:** 修复内联图片 cid:/Content-Location 加载失败（unsupported URL & 404） ([02bdf3f](https://github.com/kirasq/velo/commit/02bdf3f501f668067c20964b76915807aecb5645))
+* **email:** 内联图无条件回退占位 + IMAP 打通 Content-Location ([be4e820](https://github.com/kirasq/velo/commit/be4e820938f80b7b42388a6d253c7acbae797213))
+* **pop3:** 修复同步落库与内联图显示 ([6121870](https://github.com/kirasq/velo/commit/61218707558348195f2467df9d7b5488f36148c9))
+* **pop3:** 修正 pop3InitialSync 返回类型 (TS2739)，提前声明 stored ([04d20c6](https://github.com/kirasq/velo/commit/04d20c6753c5b4bd15bda2889cfaa25e88074197))
+* **pop3:** 同步时先插 thread 再插 message，修复外键 787 报错 ([c23190c](https://github.com/kirasq/velo/commit/c23190cdf75f3b0d18261a43eaca336c2e3c215c))
+* **pop3:** 落盘并持久化附件（内联图片/下载可用） ([3acf8f4](https://github.com/kirasq/velo/commit/3acf8f4453806928b2f6e89f34a30f388fe3fa73))
+* **release:** v0.4.32 根治内联图与 DMG 打包 ([1dea7a9](https://github.com/kirasq/velo/commit/1dea7a98b77edf57b573796dae2d45d8952eed90))
+* **settings:** AI 密钥保存失败时给出可见错误，避免静默无效果 ([cfb563c](https://github.com/kirasq/velo/commit/cfb563c3b7075e66ecdd14f0276dcf3a3807df4d))
+* **tauri:** CSP connect-src/img-src 放行 ipc:// 与 asset:// 协议 ([fa10dc9](https://github.com/kirasq/velo/commit/fa10dc93e66cef96ba20b2f165925cb0831ad79b))
+* **tauri:** CSP img-src 放行 cid: 协议（邮件内联图片） ([f139ca0](https://github.com/kirasq/velo/commit/f139ca0b94f417f9b5eab5489adcd1627b715ba7))
+
 ## [0.4.21](https://github.com/avihaymenahem/velo/compare/velo-v0.4.20...velo-v0.4.21) (2026-02-27)
 
 
