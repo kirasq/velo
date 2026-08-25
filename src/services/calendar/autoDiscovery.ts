@@ -1,5 +1,5 @@
 import { normalizeCalDavUrl } from "./caldavUrl";
-import { davFetch } from "./davFetch";
+import { davFetch, davDiagnose, summarizeDiagnosis } from "./davFetch";
 
 interface CalDavPreset {
   name: string;
@@ -192,6 +192,17 @@ export async function testCalDavConnection(
       diag = ` [raw OPTIONS error → ${probeErr}]`;
     }
 
-    return { success: false, message: `${detail}${diag}` };
+    // Deep structured diagnosis (DNS → TCP → TLS → HTTP) to pinpoint the failure.
+    let deep = "";
+    try {
+      const dx = await davDiagnose({ url: normalizedUrl, method: "OPTIONS" });
+      if (dx.overall !== "ok") {
+        deep = ` | diagnose: ${summarizeDiagnosis(dx)}`;
+      }
+    } catch {
+      // Diagnosis itself failing shouldn't mask the original error.
+    }
+
+    return { success: false, message: `${detail}${diag}${deep}` };
   }
 }

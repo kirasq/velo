@@ -438,6 +438,8 @@ pub struct DavRequest {
     pub body: Option<String>,
     /// "follow" (default) | "manual" | "error"
     pub redirect: Option<String>,
+    /// Optional retry/backoff configuration.
+    pub retry: Option<crate::dav_diag::DavRetry>,
 }
 
 #[derive(Serialize)]
@@ -452,65 +454,52 @@ pub struct DavResponse {
 
 #[tauri::command]
 pub async fn dav_request(req: DavRequest) -> Result<DavResponse, String> {
+    use crate::dav_diag::{DavError, DavFailureKind, DavRetry, raw_http};
+
     // Only allow http(s) to avoid unexpected local scheme fetches.
     if !req.url.starts_with("https://") && !req.url.starts_with("http://") {
-        return Err(format!("Unsupported URL scheme: {}", req.url));
+        let e = DavError::new(
+            DavFailureKind::InvalidUrl,
+            format!("Unsupported URL scheme: {}", req.url),
+            &req.url,
+        );
+        return Err(e.to_json());
     }
 
-    let method = req
-        .method
-        .unwrap_or_else(|| "GET".to_string());
-    let method = reqwest::Method::from_bytes(method.as_bytes())
-        .map_err(|e| format!("Invalid HTTP method: {e}"))?;
+    let method = req.method.clone().unwrap_or_else(|| "GET".to_string());
+    let redirect = req
+        .redirect
+        .clone()
+        .unwrap_or_else(|| "follow".to_string());
+    let retry: DavRetry = req.retry.clone().unwrap_or_default();
 
-    let policy = match req.redirect.as_deref() {
-        Some("manual") => reqwest::redirect::Policy::none(),
-        Some("error") => reqwest::redirect::Policy::none(),
-        _ => reqwest::redirect::Policy::default(),
-    };
+    let mut attempt: u32 = 0;
+    let mut delay = retry.base_delay_ms();
+    let factor = retry.backoff_factor();
 
-    let client = reqwest::Client::builder()
-        .redirect(policy)
-        .timeout(Duration::from_secs(30))
-        .build()
-        .map_err(|e| format!("Client error: {e}"))?;
-
-    let mut builder = client.request(method, &req.url);
-
-    if let Some(headers) = req.headers {
-        for (k, v) in headers {
-            builder = builder.header(&k, &v);
+    loop {
+        match raw_http(&req.url, &method, &req.headers, &req.body, retry.timeout_secs(), &redirect)
+            .await
+        {
+            Ok(o) => {
+                return Ok(DavResponse {
+                    status: o.status,
+                    status_text: o.status_text,
+                    url: o.url,
+                    headers: o.headers,
+                    body: o.body,
+                });
+            }
+            Err(e) => {
+                let will_retry = e.retryable && attempt < retry.max_retries();
+                if will_retry {
+                    tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+                    delay = (delay as f64 * factor) as u64;
+                    attempt += 1;
+                    continue;
+                }
+                return Err(e.to_json());
+            }
         }
     }
-    if let Some(body) = req.body {
-        builder = builder.body(body);
-    }
-
-    let resp = builder
-        .send()
-        .await
-        .map_err(|e| format!("Request failed: {e}"))?;
-
-    let status = resp.status().as_u16();
-    let status_text = resp
-        .status()
-        .canonical_reason()
-        .unwrap_or("")
-        .to_string();
-    let final_url = resp.url().to_string();
-
-    let mut headers_map = HashMap::new();
-    for (k, v) in resp.headers().iter() {
-        headers_map.insert(k.as_str().to_string(), v.to_str().unwrap_or("").to_string());
-    }
-
-    let body = resp.text().await.unwrap_or_default();
-
-    Ok(DavResponse {
-        status,
-        status_text,
-        url: final_url,
-        headers: headers_map,
-        body,
-    })
 }

@@ -1,5 +1,109 @@
 import { invoke } from "@tauri-apps/api/core";
 
+// ---- Structured CalDAV error / diagnosis types (mirror of Rust `dav_diag`) ----
+
+export type DavFailureKind =
+  | "dns"
+  | "tcp"
+  | "tls"
+  | "timeout"
+  | "server-rejected"
+  | "http"
+  | "invalid-url"
+  | "unknown";
+
+export interface DavErrorShape {
+  kind: DavFailureKind;
+  message: string;
+  url: string;
+  retryable: boolean;
+  retryAfterMs: number | null;
+}
+
+export interface DavStageResult {
+  ok: boolean;
+  detail: string;
+  durationMs: number;
+  resolved?: string[];
+  errorKind?: DavFailureKind;
+}
+
+export interface DavTlsResult {
+  ok: boolean;
+  detail: string;
+  durationMs: number;
+  certPresented?: boolean | null;
+  errorKind?: DavFailureKind;
+}
+
+export interface DavHttpResult {
+  ok: boolean;
+  status?: number;
+  statusText?: string;
+  headers?: Record<string, string>;
+  bodySnippet?: string;
+  durationMs: number;
+  errorKind?: DavFailureKind;
+}
+
+export interface DavDiagnosisShape {
+  url: string;
+  overall: "ok" | "failed";
+  dns: DavStageResult;
+  tcp: DavStageResult;
+  tls: DavTlsResult;
+  http: DavHttpResult;
+}
+
+/** Parse a structured `DavError` JSON string (as returned by `dav_request`). */
+export function parseDavError(raw: string): DavErrorShape | null {
+  const s = raw.trim();
+  if (!s.startsWith("{")) return null;
+  try {
+    const obj = JSON.parse(s) as DavErrorShape;
+    if (obj && typeof obj.kind === "string" && typeof obj.message === "string") {
+      return obj;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Run a staged connectivity diagnosis (DNS → TCP → TLS → HTTP) against a URL.
+ * Always succeeds with a `DavDiagnosisShape` describing where the chain broke.
+ */
+export async function davDiagnose(req: {
+  url: string;
+  method?: string;
+  headers?: Record<string, string>;
+  timeoutSecs?: number;
+  dnsTimeoutMs?: number;
+  tcpTimeoutMs?: number;
+  tlsTimeoutMs?: number;
+}): Promise<DavDiagnosisShape> {
+  return invoke<DavDiagnosisShape>("dav_diagnose", { req });
+}
+
+/** Build a one-line human summary from a diagnosis (for error panels). */
+export function summarizeDiagnosis(dx: DavDiagnosisShape): string {
+  if (dx.overall === "ok") {
+    return `connected (${dx.http.status ?? "?"} ${dx.http.statusText ?? ""})`;
+  }
+  const parts: string[] = [];
+  if (!dx.dns.ok) parts.push(`DNS: ${dx.dns.detail}`);
+  if (!dx.tcp.ok && dx.tcp.detail !== "skipped (previous stage failed)")
+    parts.push(`TCP: ${dx.tcp.detail}`);
+  if (!dx.tls.ok && dx.tls.detail.startsWith("TLS")) parts.push(`TLS: ${dx.tls.detail}`);
+  if (!dx.http.ok && dx.http.errorKind) {
+    const s = dx.http.status ? ` (${dx.http.status})` : "";
+    parts.push(`HTTP${s}: ${dx.http.errorKind}`);
+  }
+  if (parts.length === 0) parts.push("unknown failure");
+  return parts.join("; ");
+}
+
 /**
  * A drop-in `fetch` replacement for CalDAV traffic.
  *
@@ -123,12 +227,19 @@ export interface ResponseLike {
 
 /** Extract a human-readable message from a Tauri invoke rejection.
  * Tauri v2 may reject with a string, an InvokeError object, or a plain object,
- * so normalize all of those into a single string. */
+ * so normalize all of those into a single string. Structured `DavError` JSON
+ * (from `dav_request`) is decoded into a `[kind] message` form. */
 function toErrorMessage(e: unknown): string {
-  if (typeof e === "string") return e;
+  if (typeof e === "string") {
+    const parsed = parseDavError(e);
+    return parsed ? `[${parsed.kind}] ${parsed.message}` : e;
+  }
   if (e && typeof e === "object") {
     const obj = e as Record<string, unknown>;
-    if (typeof obj.message === "string" && obj.message.length > 0) return obj.message;
+    if (typeof obj.message === "string" && obj.message.length > 0) {
+      const parsed = parseDavError(obj.message);
+      return parsed ? `[${parsed.kind}] ${parsed.message}` : obj.message;
+    }
     try {
       return JSON.stringify(e);
     } catch {

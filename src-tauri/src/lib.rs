@@ -7,6 +7,7 @@ use tauri::{Emitter, Manager};
 use tauri_plugin_autostart::MacosLauncher;
 
 mod commands;
+mod dav_diag;
 mod imap;
 mod oauth;
 mod pop3;
@@ -118,6 +119,7 @@ pub fn run() {
             commands::openai_chat,
             commands::openai_test,
             commands::dav_request,
+            dav_diag::dav_diagnose,
         ])
         .setup(|app| {
             {
