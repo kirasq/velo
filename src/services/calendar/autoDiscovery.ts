@@ -172,7 +172,26 @@ export async function testCalDavConnection(
       calendarCount: calendars.length,
     };
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Connection failed";
-    return { success: false, message };
+    // Surface the REAL error instead of collapsing to "Connection failed".
+    console.error("[CalDAV] testCalDavConnection failed:", err);
+    const detail =
+      err instanceof Error
+        ? err.message
+        : typeof err === "object" && err
+          ? JSON.stringify(err)
+          : String(err);
+
+    // Pre-flight probe: hit the server root so we can see the raw HTTP status
+    // (401 = bad creds, 404 = wrong path, 301 = needs redirect, TLS error = cert).
+    let diag = "";
+    try {
+      const probe = await davFetch(normalizedUrl, { method: "OPTIONS" });
+      diag = ` [raw OPTIONS → ${probe.status} ${probe.statusText}]`;
+    } catch (e2) {
+      const probeErr = e2 instanceof Error ? e2.message : String(e2);
+      diag = ` [raw OPTIONS error → ${probeErr}]`;
+    }
+
+    return { success: false, message: `${detail}${diag}` };
   }
 }
