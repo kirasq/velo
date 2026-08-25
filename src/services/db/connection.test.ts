@@ -90,6 +90,21 @@ describe("withTransaction", () => {
 
     expect(tx2Ran).toBe(true);
   });
+
+  it("does NOT deadlock when the callback uses the wrapped db's execute/select", async () => {
+    // Regression guard for the re-entrant serialize deadlock: a callback that
+    // performs its own DB writes via the wrapped database must complete rather
+    // than hang forever (which would also freeze every other DB user).
+    const db = await getDb();
+    let completed = false;
+    await withTransaction(async () => {
+      await db.execute("INSERT INTO threads (id) VALUES (1)");
+      await db.select("SELECT 1");
+      await db.execute("INSERT INTO messages (id) VALUES (1)");
+      completed = true;
+    });
+    expect(completed).toBe(true);
+  });
 });
 
 describe("getDb", () => {

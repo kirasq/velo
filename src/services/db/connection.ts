@@ -27,6 +27,24 @@ let wrappedDb: Database | null = null;
  */
 let serialTail: Promise<void> = Promise.resolve();
 
+/**
+ * Tracks whether we are currently executing inside a `withTransaction` callback.
+ *
+ * The global `serialize` queue funnels every DB call into a single async chain.
+ * A `withTransaction` callback already runs *inside* that exclusive region
+ * (the whole callback is wrapped in `serialize`). If the callback's own DB
+ * calls (`db.execute`/`db.select`) were ALSO routed through `serialize`, the
+ * nested call would be queued *after* the callback's own slot — but the
+ * callback's slot cannot resolve until that nested call finishes. That is a
+ * classic re-entrant deadlock that permanently freezes the entire DB chain
+ * (and therefore every feature that touches the DB, e.g. opening settings).
+ *
+ * So while `inTransaction` is true, the wrapped DB methods bypass the queue and
+ * execute directly on the raw connection — the outer `withTransaction` already
+ * guarantees no other operation can interleave.
+ */
+let inTransaction = false;
+
 function serialize<T>(op: () => Promise<T>): Promise<T> {
   // Run `op` strictly after the previous operation settles (success OR failure).
   const next = serialTail.then(op, op);
@@ -48,17 +66,19 @@ function wrapDb(raw: Database): Database {
   const wrapped: any = Object.create(raw);
 
   wrapped.execute = (sql: string, params?: unknown[]) =>
-    serialize(() => raw.execute(sql, params));
+    inTransaction ? raw.execute(sql, params) : serialize(() => raw.execute(sql, params));
 
   wrapped.select = function <T = unknown>(sql: string, params?: unknown[]) {
-    return serialize(() => raw.select<T>(sql, params));
+    return inTransaction
+      ? raw.select<T>(sql, params)
+      : serialize(() => raw.select<T>(sql, params));
   };
 
   for (const name of ["selectObject", "executeBatch", "batchExecute"]) {
     const fn = (raw as any)[name];
     if (typeof fn === "function") {
       wrapped[name] = (sql: string, params?: unknown[]) =>
-        serialize(() => fn.call(raw, sql, params));
+        inTransaction ? fn.call(raw, sql, params) : serialize(() => fn.call(raw, sql, params));
     }
   }
 
@@ -125,7 +145,15 @@ export async function withTransaction(
   fn: (db: Database) => Promise<void>,
 ): Promise<void> {
   const database = await getDb();
-  await serialize(() => fn(database));
+  // Mark the exclusive region so the callback's own DB calls (which use the
+  // wrapped db) execute directly on the raw connection instead of re-queuing
+  // behind this very slot — otherwise the re-entrant serialize deadlocks.
+  inTransaction = true;
+  try {
+    await serialize(() => fn(database));
+  } finally {
+    inTransaction = false;
+  }
 }
 
 /**
