@@ -109,7 +109,7 @@ export class Pop3Provider implements EmailProvider {
     // date-range queries, so we rely on retention + dedupe.
     void cutoff;
 
-    const result = await pop3InitialSync(
+    const { result, stored } = await pop3InitialSync(
       this.accountId,
       knownUidls,
       nowTs,
@@ -117,7 +117,10 @@ export class Pop3Provider implements EmailProvider {
     );
 
     return {
-      messages: [],
+      // `stored` are the messages actually written to the local DB — the UI
+      // needs these to refresh (previously this returned an empty array, which
+      // left the inbox blank even after a successful sync).
+      messages: stored,
       folderStatus: {
         uidvalidity: 0,
         lastUid: result.total_count,

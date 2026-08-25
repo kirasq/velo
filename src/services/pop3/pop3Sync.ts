@@ -57,7 +57,7 @@ function pop3MessageToParsed(
       mimeType: att.mime_type,
       size: att.size,
       gmailAttachmentId: attId,
-      contentId: att.content_id,
+      contentId: normalizeCid(att.content_id),
       isInline: att.is_inline,
       localPath: att.local_path ?? null,
     };
@@ -112,7 +112,7 @@ export async function pop3InitialSync(
   knownUidls: string[],
   nowTsSeconds: number,
   onProgress?: (phase: string, current: number, total: number) => void,
-): Promise<Pop3SyncResult> {
+): Promise<{ result: Pop3SyncResult; stored: ParsedMessage[] }> {
   const account = await getAccount(accountId);
   if (!account) throw new Error(`Account ${accountId} not found`);
   const config: Pop3Config = buildPop3Config(account);
@@ -128,10 +128,12 @@ export async function pop3InitialSync(
     return result;
   }
 
+  const stored: ParsedMessage[] = [];
   await withTransaction(async () => {
     for (let i = 0; i < result.messages.length; i++) {
       const rustMsg = result.messages[i]!;
       const { parsed, localId } = pop3MessageToParsed(rustMsg, accountId);
+      stored.push(parsed);
       const rfcMessageId =
         rustMsg.message_id ?? `pop3-synth-${encodeBase64Url(rustMsg.uidl)}`;
       const threadId = threadIdForMessage(rfcMessageId, accountId);
@@ -210,7 +212,10 @@ export async function pop3InitialSync(
     }
   });
 
-  return result;
+  console.log(
+    `[pop3] sync complete: downloaded=${result.messages.length} stored=${stored.length}`,
+  );
+  return { result, stored };
 }
 
 // ---------- base64url helper ----------
@@ -222,4 +227,19 @@ function encodeBase64Url(input: string): string {
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/, "");
+}
+
+/**
+ * Normalize a Content-ID so it matches the `cid:` references found in HTML
+ * bodies. Strips the optional `cid:` scheme and surrounding `<>` brackets and
+ * trims whitespace. Mail parsers often return `<abc@xyz>` or `cid:abc@xyz`,
+ * while EmailRenderer's regex extracts `abc@xyz`, so we must store the same
+ * normalized form for inline images to resolve.
+ */
+function normalizeCid(cid: string | null | undefined): string | null {
+  if (!cid) return null;
+  let s = cid.trim();
+  if (s.toLowerCase().startsWith("cid:")) s = s.slice(4);
+  s = s.replace(/^[<>]+|[<>]+$/g, "").trim();
+  return s || null;
 }
