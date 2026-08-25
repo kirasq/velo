@@ -117,6 +117,7 @@ pub fn run() {
             commands::pop3_sync,
             commands::openai_chat,
             commands::openai_test,
+            commands::dav_request,
         ])
         .setup(|app| {
             {

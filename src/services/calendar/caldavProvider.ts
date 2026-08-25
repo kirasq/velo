@@ -10,6 +10,7 @@ import type {
 } from "./types";
 import { generateVEvent, parseVEvent } from "./icalHelper";
 import { normalizeCalDavUrl } from "./caldavUrl";
+import { davFetch } from "./davFetch";
 import { getAccount } from "@/services/db/accounts";
 
 export class CalDAVProvider implements CalendarProvider {
@@ -42,6 +43,8 @@ export class CalDAVProvider implements CalendarProvider {
       credentials: { username, password },
       authMethod: "Basic",
       defaultAccountType: "caldav",
+      // Route through Rust (reqwest) to bypass WebView CORS.
+      fetch: davFetch as unknown as typeof globalThis.fetch,
     });
 
     await this.client.login();

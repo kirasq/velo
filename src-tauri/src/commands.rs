@@ -7,7 +7,9 @@ use crate::pop3::client as pop3_client;
 use crate::pop3::types::{Pop3Config, Pop3SyncResult};
 use crate::smtp::client as smtp_client;
 use crate::smtp::types::{SmtpConfig, SmtpSendResult};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashMap;
 use std::time::Duration;
 
 // ---------- IMAP commands ----------
@@ -421,4 +423,93 @@ pub async fn openai_test(
     }
 
     Ok("Connected".to_string())
+}
+
+// ---------- CalDAV HTTP proxy (bypasses WebView CORS) ----------
+
+/// A generic HTTP request performed from the Rust side so that CalDAV traffic
+/// (which corporate servers will not serve to the `tauri://localhost` WebView
+/// origin) is not blocked by browser CORS policy.
+#[derive(Deserialize)]
+pub struct DavRequest {
+    pub url: String,
+    pub method: Option<String>,
+    pub headers: Option<HashMap<String, String>>,
+    pub body: Option<String>,
+    /// "follow" (default) | "manual" | "error"
+    pub redirect: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct DavResponse {
+    pub status: u16,
+    pub status_text: String,
+    pub url: String,
+    pub headers: HashMap<String, String>,
+    pub body: String,
+}
+
+#[tauri::command]
+pub async fn dav_request(req: DavRequest) -> Result<DavResponse, String> {
+    // Only allow http(s) to avoid unexpected local scheme fetches.
+    if !req.url.starts_with("https://") && !req.url.starts_with("http://") {
+        return Err(format!("Unsupported URL scheme: {}", req.url));
+    }
+
+    let method = req
+        .method
+        .unwrap_or_else(|| "GET".to_string());
+    let method = reqwest::Method::from_bytes(method.as_bytes())
+        .map_err(|e| format!("Invalid HTTP method: {e}"))?;
+
+    let policy = match req.redirect.as_deref() {
+        Some("manual") => reqwest::redirect::Policy::none(),
+        Some("error") => reqwest::redirect::Policy::none(),
+        _ => reqwest::redirect::Policy::default(),
+    };
+
+    let client = reqwest::Client::builder()
+        .redirect(policy)
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("Client error: {e}"))?;
+
+    let mut builder = client.request(method, &req.url);
+
+    if let Some(headers) = req.headers {
+        for (k, v) in headers {
+            builder = builder.header(&k, &v);
+        }
+    }
+    if let Some(body) = req.body {
+        builder = builder.body(body);
+    }
+
+    let resp = builder
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {e}"))?;
+
+    let status = resp.status().as_u16();
+    let status_text = resp
+        .status()
+        .canonical_reason()
+        .unwrap_or("")
+        .to_string();
+    let final_url = resp.url().to_string();
+
+    let mut headers_map = HashMap::new();
+    for (k, v) in resp.headers().iter() {
+        headers_map.insert(k.as_str().to_string(), v.to_str().unwrap_or("").to_string());
+    }
+
+    let body = resp.text().await.unwrap_or_default();
+
+    Ok(DavResponse {
+        status,
+        status_text,
+        url: final_url,
+        headers: headers_map,
+        body,
+    })
 }

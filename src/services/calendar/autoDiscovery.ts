@@ -1,4 +1,5 @@
 import { normalizeCalDavUrl } from "./caldavUrl";
+import { davFetch } from "./davFetch";
 
 interface CalDavPreset {
   name: string;
@@ -96,7 +97,7 @@ export async function discoverCalDavSettings(email: string): Promise<CalDavDisco
 
 async function tryWellKnownDiscovery(domain: string): Promise<string | null> {
   try {
-    const response = await fetch(`https://${domain}/.well-known/caldav`, {
+    const response = await davFetch(`https://${domain}/.well-known/caldav`, {
       method: "GET",
       redirect: "manual",
     });
@@ -125,7 +126,7 @@ async function tryWellKnownDiscovery(domain: string): Promise<string | null> {
 
 async function tryNextcloudDiscovery(domain: string): Promise<string | null> {
   try {
-    const response = await fetch(`https://${domain}/remote.php/dav/`, {
+    const response = await davFetch(`https://${domain}/remote.php/dav/`, {
       method: "OPTIONS",
     });
     if (response.ok || response.status === 401) {
@@ -158,6 +159,8 @@ export async function testCalDavConnection(
       credentials: { username, password },
       authMethod: "Basic",
       defaultAccountType: "caldav",
+      // Route through Rust (reqwest) to bypass WebView CORS.
+      fetch: davFetch as unknown as typeof globalThis.fetch,
     });
 
     await client.login();
