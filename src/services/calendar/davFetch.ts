@@ -63,11 +63,14 @@ export async function davFetch(
       headers: Record<string, string>;
       body: string;
     }>("dav_request", {
-      url,
-      method,
-      headers,
-      body: body ?? null,
-      redirect,
+      // Tauri v2 wraps a struct command arg under its parameter name.
+      req: {
+        url,
+        method,
+        headers,
+        body: body ?? null,
+        redirect,
+      },
     });
   } catch (e) {
     const msg = toErrorMessage(e);
