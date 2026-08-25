@@ -120,15 +120,15 @@ export async function pop3InitialSync(
   // written to disk (POP3 has no server-side attachment fetch like IMAP).
   config.attachment_dir = await appDataDir();
 
+  const stored: ParsedMessage[] = [];
   onProgress?.("download", 0, 1);
   const result = await pop3SyncInvoke(config, knownUidls, nowTsSeconds);
   onProgress?.("download", 1, 1);
 
   if (result.messages.length === 0) {
-    return result;
+    return { result, stored };
   }
 
-  const stored: ParsedMessage[] = [];
   await withTransaction(async () => {
     for (let i = 0; i < result.messages.length; i++) {
       const rustMsg = result.messages[i]!;
