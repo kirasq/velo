@@ -20,17 +20,18 @@ export async function upsertAttachment(att: {
   filename: string | null;
   mimeType: string | null;
   size: number | null;
-  gmailAttachmentId: string | null;
+  gmailAttachmentId:  string | null;
   contentId: string | null;
   isInline: boolean;
+  localPath?: string | null;
 }): Promise<void> {
   const db = await getDb();
   await db.execute(
-    `INSERT INTO attachments (id, message_id, account_id, filename, mime_type, size, gmail_attachment_id, content_id, is_inline)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    `INSERT INTO attachments (id, message_id, account_id, filename, mime_type, size, gmail_attachment_id, content_id, is_inline, local_path)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
      ON CONFLICT(id) DO UPDATE SET
        filename = $4, mime_type = $5, size = $6,
-       gmail_attachment_id = $7, content_id = $8, is_inline = $9`,
+       gmail_attachment_id = $7, content_id = $8, is_inline = $9, local_path = $10`,
     [
       att.id,
       att.messageId,
@@ -41,6 +42,7 @@ export async function upsertAttachment(att: {
       att.gmailAttachmentId,
       att.contentId,
       att.isInline ? 1 : 0,
+      att.localPath ?? null,
     ],
   );
 }

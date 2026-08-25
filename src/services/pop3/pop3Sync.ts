@@ -4,8 +4,10 @@ import { pop3Sync as pop3SyncInvoke } from "./tauriCommands";
 import { buildPop3Config } from "./pop3ConfigBuilder";
 import { getAccount } from "../db/accounts";
 import { upsertMessage } from "../db/messages";
+import { upsertAttachment } from "../db/attachments";
 import { upsertThread, setThreadLabels } from "../db/threads";
 import { withTransaction } from "../db/connection";
+import { appDataDir } from "@tauri-apps/api/path";
 
 // velo uses RFC-style label IDs stored as plain strings.
 const LABEL_INBOX = "INBOX";
@@ -46,14 +48,20 @@ function pop3MessageToParsed(
   const isRead = false;
   const isStarred = false;
 
-  const attachments = msg.attachments.map((att) => ({
-    filename: att.filename,
-    mimeType: att.mime_type,
-    size: att.size,
-    gmailAttachmentId: crypto.randomUUID(),
-    contentId: att.content_id,
-    isInline: att.is_inline,
-  }));
+  const attachments = msg.attachments.map((att, idx) => {
+    // Deterministic id (uidl-scoped) so re-sync does not duplicate rows.
+    const attKey = att.content_id ?? att.filename ?? String(idx);
+    const attId = `${localId}_${attKey}`;
+    return {
+      filename: att.filename,
+      mimeType: att.mime_type,
+      size: att.size,
+      gmailAttachmentId: attId,
+      contentId: att.content_id,
+      isInline: att.is_inline,
+      localPath: att.local_path ?? null,
+    };
+  });
 
   const parsed: ParsedMessage = {
     id: localId,
@@ -108,6 +116,9 @@ export async function pop3InitialSync(
   const account = await getAccount(accountId);
   if (!account) throw new Error(`Account ${accountId} not found`);
   const config: Pop3Config = buildPop3Config(account);
+  // JS computes the app-data dir and hands it to Rust so attachments can be
+  // written to disk (POP3 has no server-side attachment fetch like IMAP).
+  config.attachment_dir = await appDataDir();
 
   onProgress?.("download", 0, 1);
   const result = await pop3SyncInvoke(config, knownUidls, nowTsSeconds);
@@ -174,6 +185,26 @@ export async function pop3InitialSync(
         inReplyToHeader: rustMsg.in_reply_to,
         pop3Uidl: rustMsg.uidl,
       });
+
+      // Persist attachments (including local_path written by Rust during sync).
+      for (const att of parsed.attachments) {
+        try {
+          await upsertAttachment({
+            id: att.gmailAttachmentId,
+            messageId: localId,
+            accountId,
+            filename: att.filename,
+            mimeType: att.mimeType,
+            size: att.size,
+            gmailAttachmentId: att.gmailAttachmentId,
+            contentId: att.contentId,
+            isInline: att.isInline,
+            localPath: att.localPath,
+          });
+        } catch (e) {
+          console.error("Failed to persist POP3 attachment", att.filename, e);
+        }
+      }
 
       onProgress?.("store", i + 1, result.messages.length);
     }

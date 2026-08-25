@@ -45,7 +45,7 @@ pub async fn sync(
         if config.retention_days > 0 {
             // We need the Date to decide; fetch + parse first, then decide.
             let raw = client.retr(meta.msg_number).await?;
-            match client::parse_message(&meta.uidl, &raw) {
+            match client::parse_message(&meta.uidl, &raw, &config.attachment_dir) {
                 Ok(msg) => {
                     let age = now_ts - msg.date;
                     if age > retention_secs && msg.date > 0 {
@@ -67,7 +67,7 @@ pub async fn sync(
         } else {
             // No retention → just download + store
             let raw = client.retr(meta.msg_number).await?;
-            if let Ok(msg) = client::parse_message(&meta.uidl, &raw) {
+            if let Ok(msg) = client::parse_message(&meta.uidl, &raw, &config.attachment_dir) {
                 new_count += 1;
                 new_messages.push(msg);
             }

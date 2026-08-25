@@ -8,6 +8,7 @@ export interface ParsedAttachment {
   gmailAttachmentId: string;
   contentId: string | null;
   isInline: boolean;
+  localPath?: string | null;
 }
 
 export interface ParsedMessage {

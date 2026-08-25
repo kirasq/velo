@@ -8,12 +8,8 @@ export interface Pop3Config {
   accept_invalid_certs: boolean;
   /** Days to keep messages on the server before DELE. 0 = keep forever. */
   retention_days: number;
-}
-
-export interface Pop3MessageMeta {
-  msg_number: number;
-  uidl: string;
-  size: number;
+  /** AppData directory; Rust writes attachment files under it. JS-provided. */
+  attachment_dir?: string;
 }
 
 export interface Pop3Attachment {
@@ -22,6 +18,14 @@ export interface Pop3Attachment {
   size: number;
   content_id: string | null;
   is_inline: boolean;
+  /** Absolute path on disk where the decoded bytes are stored (POP3 only). */
+  local_path?: string | null;
+}
+
+export interface Pop3MessageMeta {
+  msg_number: number;
+  uidl: string;
+  size: number;
 }
 
 export interface Pop3Message {

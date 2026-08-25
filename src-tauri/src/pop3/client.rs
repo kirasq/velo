@@ -457,7 +457,7 @@ where
 }
 
 // ---------- message parsing ----------
-pub fn parse_message(uidl: &str, raw: &[u8]) -> Result<Pop3Message, String> {
+pub fn parse_message(uidl: &str, raw: &[u8], attachment_dir: &str) -> Result<Pop3Message, String> {
     let parsed = MessageParser::default()
         .parse(raw)
         .ok_or_else(|| "Failed to parse message".to_string())?;
@@ -524,17 +524,36 @@ pub fn parse_message(uidl: &str, raw: &[u8]) -> Result<Pop3Message, String> {
                 }
             })
             .unwrap_or_else(|| "application/octet-stream".to_string());
-        let size = att.raw_len() as u32;
         let content_id = att.content_id().map(|s| s.to_string());
         let is_inline = att
             .content_disposition()
             .map_or(false, |d| d.ctype().eq_ignore_ascii_case("inline"));
+
+        // Extract decoded bytes from the part body and persist to disk so the
+        // JS layer can read them via local_path — POP3 has no server-side
+        // attachment fetch like IMAP's BODY[section].
+        let bytes: Vec<u8> = match &att.body {
+            mail_parser::PartType::Binary(d) | mail_parser::PartType::InlineBinary(d) => {
+                d.as_ref().to_vec()
+            }
+            mail_parser::PartType::Text(d) => d.as_bytes().to_vec(),
+            mail_parser::PartType::Html(d) => d.as_bytes().to_vec(),
+            _ => Vec::new(),
+        };
+        let size = bytes.len() as u32;
+        let local_path = if bytes.is_empty() {
+            None
+        } else {
+            write_attachment(attachment_dir, uidl, &filename, &bytes)
+        };
+
         attachments.push(Pop3Attachment {
             filename,
             mime_type,
             size,
             content_id,
             is_inline,
+            local_path,
         });
     }
 
@@ -560,6 +579,61 @@ pub fn parse_message(uidl: &str, raw: &[u8]) -> Result<Pop3Message, String> {
         auth_results,
         attachments,
     })
+}
+
+/// Persist an attachment's decoded bytes to disk under
+/// `<attachment_dir>/velo-attachments/<uidl>/<filename>`.
+///
+/// Returns the absolute path on success, or `None` if the write fails (e.g.
+/// the directory is unreadable or the filename is empty). Attachment presence
+/// in the DB is best-effort: a failed write simply means the inline image /
+/// download will be unavailable, which is non-fatal.
+fn write_attachment(base_dir: &str, uidl: &str, filename: &str, bytes: &[u8]) -> Option<String> {
+    use std::fs;
+    use std::path::{Component, Path};
+
+    let safe_uidl: String = uidl
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+        .collect();
+    let safe_name: String = filename
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '.' || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>()
+        .trim_matches('.')
+        .to_string();
+    let safe_name = if safe_name.is_empty() {
+        "attachment"
+    } else {
+        &safe_name
+    };
+
+    // Reject any path-traversal component defensively (safe_name is already
+    // sanitized, but guard against absolute/relative components in uidl too).
+    let dir = Path::new(base_dir)
+        .join("velo-attachments")
+        .join(safe_uidl);
+    // Ensure the resolved path is within base_dir.
+    let target = dir.join(safe_name);
+    if target.components().any(|c| matches!(c, Component::ParentDir | Component::RootDir)) {
+        return None;
+    }
+
+    if let Err(e) = fs::create_dir_all(&dir) {
+        log::warn!("Failed to create attachment dir: {e}");
+        return None;
+    }
+    if let Err(e) = fs::write(&target, bytes) {
+        log::warn!("Failed to write attachment: {e}");
+        return None;
+    }
+    target.to_string_lossy().to_string().into()
 }
 
 fn join_addresses(addrs: Option<&Address>) -> Option<String> {

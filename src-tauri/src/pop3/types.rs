@@ -17,6 +17,11 @@ pub struct Pop3Config {
     /// 0 means "never delete from server" (keep forever).
     #[serde(default)]
     pub retention_days: u32,
+    /// Base directory (AppData) under which attachment files are written.
+    /// JS passes the Tauri app-data dir; Rust writes
+    /// `<attachment_dir>/velo-attachments/<uidl>/<filename>` for each attachment.
+    #[serde(default)]
+    pub attachment_dir: String,
 }
 
 /// A single message enumerated by UIDL.
@@ -76,4 +81,7 @@ pub struct Pop3Attachment {
     pub size: u32,
     pub content_id: Option<String>,
     pub is_inline: bool,
+    /// Absolute path on disk where the decoded attachment bytes are stored.
+    /// `None` when disk persistence failed or attachments are not saved locally.
+    pub local_path: Option<String>,
 }
