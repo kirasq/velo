@@ -137,6 +137,7 @@ export function CalendarPage() {
       setCalendarError(null);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      console.error("Failed to load calendar events:", err);
       if (message.includes("403") || message.includes("insufficient")) {
         if (reauthDoneRef.current) {
           reauthDoneRef.current = false;
@@ -149,7 +150,8 @@ export function CalendarPage() {
           setNeedsReauth(true);
         }
       } else {
-        console.error("Failed to load calendar events:", err);
+        // Surface the real failure instead of silently leaving an empty calendar.
+        setCalendarError(message || "Failed to load calendar events");
       }
     } finally {
       setLoading(false);

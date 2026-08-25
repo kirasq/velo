@@ -64,15 +64,15 @@ export class CalDAVProvider implements CalendarProvider {
   }
 
   async fetchEvents(calendarRemoteId: string, timeMin: string, timeMax: string): Promise<CalendarEventData[]> {
-    const client = await this.getClient();
+    let objects = await this.fetchObjectsWithRange(calendarRemoteId, timeMin, timeMax);
 
-    const objects = await client.fetchCalendarObjects({
-      calendar: { url: calendarRemoteId } as DAVCalendar,
-      timeRange: {
-        start: timeMin,
-        end: timeMax,
-      },
-    });
+    // Some CalDAV servers (e.g. Nextcloud) mishandle the time-range
+    // calendar-query and return an empty set even when events exist.
+    // Fall back to a full fetch (no time filter) when the range query
+    // yields nothing, so the calendar still populates.
+    if (!objects || objects.length === 0) {
+      objects = await this.fetchAllObjects(calendarRemoteId);
+    }
 
     return objects
       .filter((obj) => obj.data)
@@ -81,6 +81,33 @@ export class CalDAVProvider implements CalendarProvider {
         event.etag = obj.etag ?? null;
         return event;
       });
+  }
+
+  private async fetchObjectsWithRange(
+    calendarRemoteId: string,
+    timeMin: string,
+    timeMax: string,
+  ): Promise<DAVObject[]> {
+    const client = await this.getClient();
+    try {
+      return await client.fetchCalendarObjects({
+        calendar: { url: calendarRemoteId } as DAVCalendar,
+        timeRange: {
+          start: timeMin,
+          end: timeMax,
+        },
+      });
+    } catch (err) {
+      console.warn("CalDAV time-range query failed, falling back to full fetch:", err);
+      return [];
+    }
+  }
+
+  private async fetchAllObjects(calendarRemoteId: string): Promise<DAVObject[]> {
+    const client = await this.getClient();
+    return client.fetchCalendarObjects({
+      calendar: { url: calendarRemoteId } as DAVCalendar,
+    });
   }
 
   async createEvent(calendarRemoteId: string, event: CreateEventInput): Promise<CalendarEventData> {
