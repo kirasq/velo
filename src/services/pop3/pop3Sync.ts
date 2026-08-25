@@ -127,6 +127,26 @@ export async function pop3InitialSync(
 
       parsed.threadId = threadId;
 
+      // Insert the thread BEFORE the message. The messages table has a foreign
+      // key (account_id, thread_id) -> threads, and SQLite enforces immediate
+      // (non-deferred) FK checks. Inserting a message that references a not-yet
+      // existing thread fails with SQLITE_CONSTRAINT_FOREIGNKEY, aborting the
+      // whole transaction and surfacing as "Sync failed".
+      await upsertThread({
+        id: threadId,
+        accountId,
+        subject: parsed.subject ?? "(no subject)",
+        snippet: parsed.snippet,
+        lastMessageAt: parsed.date,
+        messageCount: 1,
+        isRead: parsed.isRead,
+        isStarred: parsed.isStarred,
+        isImportant: false,
+        hasAttachments: parsed.hasAttachments,
+      });
+
+      await setThreadLabels(accountId, threadId, parsed.labelIds);
+
       await upsertMessage({
         id: localId,
         accountId,
@@ -154,21 +174,6 @@ export async function pop3InitialSync(
         inReplyToHeader: rustMsg.in_reply_to,
         pop3Uidl: rustMsg.uidl,
       });
-
-      await upsertThread({
-        id: threadId,
-        accountId,
-        subject: parsed.subject ?? "(no subject)",
-        snippet: parsed.snippet,
-        lastMessageAt: parsed.date,
-        messageCount: 1,
-        isRead: parsed.isRead,
-        isStarred: parsed.isStarred,
-        isImportant: false,
-        hasAttachments: parsed.hasAttachments,
-      });
-
-      await setThreadLabels(accountId, threadId, parsed.labelIds);
 
       onProgress?.("store", i + 1, result.messages.length);
     }
