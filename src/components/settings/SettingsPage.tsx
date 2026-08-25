@@ -184,6 +184,7 @@ export function SettingsPage() {
   const [aiAutoCategorize, setAiAutoCategorize] = useState(true);
   const [aiAutoSummarize, setAiAutoSummarize] = useState(true);
   const [aiKeySaved, setAiKeySaved] = useState(false);
+  const [aiKeyError, setAiKeyError] = useState<string | null>(null);
   const [aiTesting, setAiTesting] = useState(false);
   const [aiTestResult, setAiTestResult] = useState<"success" | "fail" | null>(null);
   const [aiTestMessage, setAiTestMessage] = useState<string>("");
@@ -316,16 +317,22 @@ export function SettingsPage() {
   }, []);
 
   const handleSaveApiSettings = useCallback(async () => {
-    const trimmedId = clientId.trim();
-    if (trimmedId) {
-      await setSetting("google_client_id", trimmedId);
+    setAiKeyError(null);
+    try {
+      const trimmedId = clientId.trim();
+      if (trimmedId) {
+        await setSetting("google_client_id", trimmedId);
+      }
+      const trimmedSecret = clientSecret.trim();
+      if (trimmedSecret) {
+        await setSecureSetting("google_client_secret", trimmedSecret);
+      }
+      setApiSettingsSaved(true);
+      setTimeout(() => setApiSettingsSaved(false), 2000);
+    } catch (err) {
+      console.error("[Settings] Failed to save API settings:", err);
+      setAiKeyError(err instanceof Error ? err.message : String(err));
     }
-    const trimmedSecret = clientSecret.trim();
-    if (trimmedSecret) {
-      await setSecureSetting("google_client_secret", trimmedSecret);
-    }
-    setApiSettingsSaved(true);
-    setTimeout(() => setApiSettingsSaved(false), 2000);
   }, [clientId, clientSecret]);
 
   const handleManualSync = useCallback(async () => {
@@ -1180,12 +1187,18 @@ export function SettingsPage() {
                             variant="primary"
                             size="md"
                             onClick={async () => {
-                              await setSetting("ollama_server_url", ollamaServerUrl.trim());
-                              await setSetting("ollama_model", ollamaModel.trim());
-                              const { clearProviderClients } = await import("@/services/ai/providerManager");
-                              clearProviderClients();
-                              setAiKeySaved(true);
-                              setTimeout(() => setAiKeySaved(false), 2000);
+                              setAiKeyError(null);
+                              try {
+                                await setSetting("ollama_server_url", ollamaServerUrl.trim());
+                                await setSetting("ollama_model", ollamaModel.trim());
+                                const { clearProviderClients } = await import("@/services/ai/providerManager");
+                                clearProviderClients();
+                                setAiKeySaved(true);
+                                setTimeout(() => setAiKeySaved(false), 2000);
+                              } catch (err) {
+                                console.error("[Settings] Failed to save Ollama config:", err);
+                                setAiKeyError(err instanceof Error ? err.message : String(err));
+                              }
                             }}
                             disabled={!ollamaServerUrl.trim() || !ollamaModel.trim()}
                           >
@@ -1341,30 +1354,36 @@ export function SettingsPage() {
                             variant="primary"
                             size="md"
                             onClick={async () => {
-                              const keySettingMap = {
-                                claude: "claude_api_key",
-                                openai: "openai_api_key",
-                                gemini: "gemini_api_key",
-                                copilot: "copilot_api_key",
-                              } as const;
-                              const keyValue =
-                                aiProvider === "claude" ? claudeApiKey.trim()
-                                : aiProvider === "openai" ? openaiApiKey.trim()
-                                : aiProvider === "copilot" ? copilotApiKey.trim()
-                                : geminiApiKey.trim();
-                              if (keyValue) {
-                                await setSecureSetting(keySettingMap[aiProvider], keyValue);
-                                const { clearProviderClients } = await import("@/services/ai/providerManager");
-                                clearProviderClients();
+                              setAiKeyError(null);
+                              try {
+                                const keySettingMap = {
+                                  claude: "claude_api_key",
+                                  openai: "openai_api_key",
+                                  gemini: "gemini_api_key",
+                                  copilot: "copilot_api_key",
+                                } as const;
+                                const keyValue =
+                                  aiProvider === "claude" ? claudeApiKey.trim()
+                                  : aiProvider === "openai" ? openaiApiKey.trim()
+                                  : aiProvider === "copilot" ? copilotApiKey.trim()
+                                  : geminiApiKey.trim();
+                                if (keyValue) {
+                                  await setSecureSetting(keySettingMap[aiProvider], keyValue);
+                                  const { clearProviderClients } = await import("@/services/ai/providerManager");
+                                  clearProviderClients();
+                                }
+                                if (aiProvider === "openai") {
+                                  await setSetting("openai_base_url", openaiBaseUrl.trim() || "https://api.openai.com/v1");
+                                  await setSetting("openai_model", openaiModel.trim() || "gpt-4o-mini");
+                                  const { clearProviderClients } = await import("@/services/ai/providerManager");
+                                  clearProviderClients();
+                                }
+                                setAiKeySaved(true);
+                                setTimeout(() => setAiKeySaved(false), 2000);
+                              } catch (err) {
+                                console.error("[Settings] Failed to save AI key:", err);
+                                setAiKeyError(err instanceof Error ? err.message : String(err));
                               }
-                              if (aiProvider === "openai") {
-                                await setSetting("openai_base_url", openaiBaseUrl.trim() || "https://api.openai.com/v1");
-                                await setSetting("openai_model", openaiModel.trim() || "gpt-4o-mini");
-                                const { clearProviderClients } = await import("@/services/ai/providerManager");
-                                clearProviderClients();
-                              }
-                              setAiKeySaved(true);
-                              setTimeout(() => setAiKeySaved(false), 2000);
                             }}
                             disabled={
                               !(aiProvider === "claude" ? claudeApiKey.trim()
@@ -1413,6 +1432,11 @@ export function SettingsPage() {
                               {aiTestMessage && (
                                 <span className="block mt-0.5 max-w-xs break-words opacity-80">{aiTestMessage}</span>
                               )}
+                            </span>
+                          )}
+                          {aiKeyError && (
+                            <span className="text-xs text-danger block w-full mt-2 max-w-md break-words">
+                              {t("settings.ai.saveError")}: {aiKeyError}
                             </span>
                           )}
                         </div>

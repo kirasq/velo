@@ -473,6 +473,7 @@ export const zh: Record<string, string> = {
   "settings.ai.baseUrl.placeholder": "https://api.openai.com/v1",
   "settings.ai.baseUrl.desc": "用于 OpenAI 兼容服务的自定义接口地址（OpenRouter、LM Studio、vLLM 等）。如需要请包含 /v1 路径。",
   "settings.ai.saveKey": "保存密钥",
+  "settings.ai.saveError": "保存失败",
   "settings.ai.features.title": "功能",
   "settings.ai.enableAi.label": "启用 AI 功能",
   "settings.ai.enableAi.description": "所有 AI 功能的总开关",

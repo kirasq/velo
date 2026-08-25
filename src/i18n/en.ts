@@ -475,6 +475,7 @@ export const en: Record<string, string> = {
   "settings.ai.baseUrl.placeholder": "https://api.openai.com/v1",
   "settings.ai.baseUrl.desc": "Custom endpoint for OpenAI-compatible services (OpenRouter, LM Studio, vLLM, etc.). Include the /v1 path if required.",
   "settings.ai.saveKey": "Save Key",
+  "settings.ai.saveError": "Save failed",
   "settings.ai.features.title": "Features",
   "settings.ai.enableAi.label": "Enable AI features",
   "settings.ai.enableAi.description": "Master toggle for all AI functionality",
