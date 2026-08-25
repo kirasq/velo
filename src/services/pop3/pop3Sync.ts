@@ -133,82 +133,94 @@ export async function pop3InitialSync(
     for (let i = 0; i < result.messages.length; i++) {
       const rustMsg = result.messages[i]!;
       const { parsed, localId } = pop3MessageToParsed(rustMsg, accountId);
-      stored.push(parsed);
       const rfcMessageId =
         rustMsg.message_id ?? `pop3-synth-${encodeBase64Url(rustMsg.uidl)}`;
       const threadId = threadIdForMessage(rfcMessageId, accountId);
 
       parsed.threadId = threadId;
 
-      // Insert the thread BEFORE the message. The messages table has a foreign
-      // key (account_id, thread_id) -> threads, and SQLite enforces immediate
-      // (non-deferred) FK checks. Inserting a message that references a not-yet
-      // existing thread fails with SQLITE_CONSTRAINT_FOREIGNKEY, aborting the
-      // whole transaction and surfacing as "Sync failed".
-      await upsertThread({
-        id: threadId,
-        accountId,
-        subject: parsed.subject ?? "(no subject)",
-        snippet: parsed.snippet,
-        lastMessageAt: parsed.date,
-        messageCount: 1,
-        isRead: parsed.isRead,
-        isStarred: parsed.isStarred,
-        isImportant: false,
-        hasAttachments: parsed.hasAttachments,
-      });
+      // Isolate each message's writes. A single contended/failed write must NOT
+      // abort the whole batch — previously one SQLITE_BUSY timeout rolled back
+      // every message (and attachment), leaving the DB empty so inline images
+      // could never resolve. Now a bad message is skipped while the rest land.
+      try {
+        // Insert the thread BEFORE the message. The messages table has a foreign
+        // key (account_id, thread_id) -> threads, and SQLite enforces immediate
+        // (non-deferred) FK checks. Inserting a message that references a not-yet
+        // existing thread fails with SQLITE_CONSTRAINT_FOREIGNKEY.
+        await upsertThread({
+          id: threadId,
+          accountId,
+          subject: parsed.subject ?? "(no subject)",
+          snippet: parsed.snippet,
+          lastMessageAt: parsed.date,
+          messageCount: 1,
+          isRead: parsed.isRead,
+          isStarred: parsed.isStarred,
+          isImportant: false,
+          hasAttachments: parsed.hasAttachments,
+        });
 
-      await setThreadLabels(accountId, threadId, parsed.labelIds);
+        await setThreadLabels(accountId, threadId, parsed.labelIds);
 
-      await upsertMessage({
-        id: localId,
-        accountId,
-        threadId,
-        fromAddress: parsed.fromAddress,
-        fromName: parsed.fromName,
-        toAddresses: parsed.toAddresses,
-        ccAddresses: parsed.ccAddresses,
-        bccAddresses: parsed.bccAddresses,
-        replyTo: parsed.replyTo,
-        subject: parsed.subject,
-        snippet: parsed.snippet,
-        date: parsed.date,
-        isRead: parsed.isRead,
-        isStarred: parsed.isStarred,
-        bodyHtml: parsed.bodyHtml,
-        bodyText: parsed.bodyText,
-        rawSize: parsed.rawSize,
-        internalDate: parsed.internalDate,
-        listUnsubscribe: parsed.listUnsubscribe,
-        listUnsubscribePost: parsed.listUnsubscribePost,
-        authResults: parsed.authResults,
-        messageIdHeader: rustMsg.message_id,
-        referencesHeader: rustMsg.references,
-        inReplyToHeader: rustMsg.in_reply_to,
-        pop3Uidl: rustMsg.uidl,
-      });
+        await upsertMessage({
+          id: localId,
+          accountId,
+          threadId,
+          fromAddress: parsed.fromAddress,
+          fromName: parsed.fromName,
+          toAddresses: parsed.toAddresses,
+          ccAddresses: parsed.ccAddresses,
+          bccAddresses: parsed.bccAddresses,
+          replyTo: parsed.replyTo,
+          subject: parsed.subject,
+          snippet: parsed.snippet,
+          date: parsed.date,
+          isRead: parsed.isRead,
+          isStarred: parsed.isStarred,
+          bodyHtml: parsed.bodyHtml,
+          bodyText: parsed.bodyText,
+          rawSize: parsed.rawSize,
+          internalDate: parsed.internalDate,
+          listUnsubscribe: parsed.listUnsubscribe,
+          listUnsubscribePost: parsed.listUnsubscribePost,
+          authResults: parsed.authResults,
+          messageIdHeader: rustMsg.message_id,
+          referencesHeader: rustMsg.references,
+          inReplyToHeader: rustMsg.in_reply_to,
+          pop3Uidl: rustMsg.uidl,
+        });
 
-      // Persist attachments (including local_path written by Rust during sync).
-      for (const att of parsed.attachments) {
-        try {
-          await upsertAttachment({
-            id: att.gmailAttachmentId,
-            messageId: localId,
-            accountId,
-            filename: att.filename,
-            mimeType: att.mimeType,
-            size: att.size,
-            gmailAttachmentId: att.gmailAttachmentId,
-            contentId: att.contentId,
-            isInline: att.isInline,
-            localPath: att.localPath,
-          });
-        } catch (e) {
-          console.error("Failed to persist POP3 attachment", att.filename, e);
+        // Persist attachments (including local_path written by Rust during sync).
+        for (const att of parsed.attachments) {
+          try {
+            await upsertAttachment({
+              id: att.gmailAttachmentId,
+              messageId: localId,
+              accountId,
+              filename: att.filename,
+              mimeType: att.mimeType,
+              size: att.size,
+              gmailAttachmentId: att.gmailAttachmentId,
+              contentId: att.contentId,
+              isInline: att.isInline,
+              localPath: att.localPath,
+            });
+          } catch (e) {
+            console.error("Failed to persist POP3 attachment", att.filename, e);
+          }
         }
-      }
 
-      onProgress?.("store", i + 1, result.messages.length);
+        // Only surface messages that actually persisted, so the UI state stays
+        // consistent with the DB (no phantom rows that vanish on reload).
+        stored.push(parsed);
+        onProgress?.("store", i + 1, result.messages.length);
+      } catch (e) {
+        console.error(
+          `[pop3] skipped message ${localId} (persist failed):`,
+          e,
+        );
+      }
     }
   });
 

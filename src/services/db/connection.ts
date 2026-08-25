@@ -58,27 +58,72 @@ function serialize<T>(op: () => Promise<T>): Promise<T> {
 }
 
 /**
+ * Detect transient SQLite failures that should be retried rather than surfaced
+ * as a hard error. Under the sqlx connection pool, concurrent React reads and
+ * the sync write batch can briefly contend for the single SQLite writer lock,
+ * yielding SQLITE_BUSY (code 5) / "database is locked" / pool acquire timeouts.
+ * These clear quickly once the contending op finishes, so a short retry with
+ * backoff recovers the write instead of dropping it (which previously left the
+ * whole sync batch with `rows_affected=0`).
+ */
+function isTransientSqlError(e: unknown): boolean {
+  const msg = (e as { message?: string })?.message ?? "";
+  return /busy|locked|timeout|SQLITE_BUSY|SQLITE_LOCKED/i.test(msg);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+const MAX_RETRY = 6;
+
+async function execWithRetry(
+  op: () => Promise<unknown>,
+): Promise<unknown> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < MAX_RETRY; attempt++) {
+    try {
+      return await op();
+    } catch (e) {
+      if (isTransientSqlError(e) && attempt < MAX_RETRY - 1) {
+        lastErr = e;
+        await sleep(50 * 2 ** attempt);
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw lastErr;
+}
+
+/**
  * Wrap a raw Database so that `execute` / `select` (and any batch variants)
- * are funneled through the global serialization queue. This is what makes the
- * connection-pool busy_timeout problem disappear without touching the library.
+ * are funneled through the global serialization queue AND retried on transient
+ * lock/timeouts. Serialization removes cross-connection contention from the JS
+ * side; the retry makes the remaining brief contentions self-healing so a
+ * single contended write no longer silently drops the whole sync batch.
  */
 function wrapDb(raw: Database): Database {
   const wrapped: any = Object.create(raw);
 
   wrapped.execute = (sql: string, params?: unknown[]) =>
-    inTransaction ? raw.execute(sql, params) : serialize(() => raw.execute(sql, params));
+    inTransaction
+      ? execWithRetry(() => raw.execute(sql, params))
+      : serialize(() => execWithRetry(() => raw.execute(sql, params)));
 
   wrapped.select = function <T = unknown>(sql: string, params?: unknown[]) {
     return inTransaction
-      ? raw.select<T>(sql, params)
-      : serialize(() => raw.select<T>(sql, params));
+      ? execWithRetry(() => raw.select<T>(sql, params))
+      : serialize(() => execWithRetry(() => raw.select<T>(sql, params)));
   };
 
   for (const name of ["selectObject", "executeBatch", "batchExecute"]) {
     const fn = (raw as any)[name];
     if (typeof fn === "function") {
       wrapped[name] = (sql: string, params?: unknown[]) =>
-        inTransaction ? fn.call(raw, sql, params) : serialize(() => fn.call(raw, sql, params));
+        inTransaction
+          ? execWithRetry(() => fn.call(raw, sql, params))
+          : serialize(() => execWithRetry(() => fn.call(raw, sql, params)));
     }
   }
 
@@ -93,7 +138,7 @@ export async function getDb(): Promise<Database> {
     // life of the app. journal_mode=WAL is file-level and persists regardless.
     try {
       await rawDb.execute("PRAGMA journal_mode = WAL", []);
-      await rawDb.execute("PRAGMA busy_timeout = 10000", []);
+      await rawDb.execute("PRAGMA busy_timeout = 30000", []);
       await rawDb.execute("PRAGMA synchronous = NORMAL", []);
       await rawDb.execute("PRAGMA foreign_keys = ON", []);
     } catch {
