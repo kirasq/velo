@@ -5,6 +5,18 @@
 # 作用：从 macOS Keychain 读取 Tauri 更新签名口令，启动带签名的 tauri build，
 #       并在构建完成后自动生成 updater 所需的 latest.json（Tauri v2 不会自动生成）。
 #
+# 根治 DMG 打包间歇性失败：
+#   早期版本直接用 `tauri build`（targets: "all"），dmg 由 Tauri 内置的
+#   create-dmg（fork）生成。该脚本依赖 Finder AppleScript 做窗口美化，
+#   在 CI / 无头环境会间歇性失败（常见 -1728 "Can't get disk" 竞态、
+#   -10006 "Can't set item"），一旦失败整个构建被 abort，连带 latest.json
+#   都生成不了，必须两步绕过（手动 hdiutil 造 dmg 再补签名）。
+#   本脚本改为：
+#     1) `tauri build --bundles app`  —— 只构建 .app 与 updater 签名包
+#         （.app.tar.gz / .sig），彻底跳过脆弱的 create-dmg 步骤；
+#     2) 用系统 hdiutil 确定性地生成 dmg（复制 .app + Applications 软链），
+#        无任何 Finder 自动化，稳定可复现。
+#
 # 前置条件（一次性）：
 #   1) 私钥已存放于 ~/.tauri/velo_key_cli.key（加密，权限 600）
 #   2) 口令已存入 Keychain：
@@ -58,11 +70,33 @@ export TAURI_SIGNING_PRIVATE_KEY="$PRIV_KEY"
 export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="$PASS"
 
 cd "$(dirname "$0")/.."
-echo ">>> 开始签名构建（口令已从 Keychain 注入）..."
-npm run tauri build "$@"
 
-# ---- 生成 latest.json（Tauri v2 不自动生成）----
 BUNDLE_DIR="src-tauri/target/release/bundle"
+APP_BUNDLE="${BUNDLE_DIR}/macos/${APP_NAME}.app"
+
+# ---- 1) 只构建 app 包（含 .app.tar.gz 更新签名包），跳过脆弱的 create-dmg 步骤 ----
+echo ">>> 开始签名构建 app 包（dmg 将由 hdiutil 确定性生成，避免 create-dmg Finder 自动化间歇失败）..."
+npm run tauri build -- --bundles app
+
+# ---- 2) 用 hdiutil 确定性生成 dmg（替代 create-dmg 的 AppleScript 美化）----
+VERSION="$(python3 -c "import json;print(json.load(open('src-tauri/tauri.conf.json'))['version'])")"
+DMG_DIR="${BUNDLE_DIR}/dmg"
+DMG_PATH="${DMG_DIR}/${APP_NAME}_${VERSION}_aarch64.dmg"
+
+if [[ -d "$APP_BUNDLE" ]]; then
+  mkdir -p "$DMG_DIR"
+  STAGE="$(mktemp -d)"
+  cp -R "$APP_BUNDLE" "$STAGE/"
+  ln -s /Applications "$STAGE/Applications"
+  # 若先前已存在同名 dmg 则覆盖
+  hdiutil create -volname "$APP_NAME" -srcfolder "$STAGE" -ov -format UDZO "$DMG_PATH"
+  rm -rf "$STAGE"
+  echo ">>> 已生成 $DMG_PATH"
+else
+  echo "警告：未找到 $APP_BUNDLE，跳过 dmg 生成。" >&2
+fi
+
+# ---- 3) 生成 latest.json（Tauri v2 不自动生成）----
 SIG_FILE="${BUNDLE_DIR}/macos/${APP_NAME}.app.tar.gz.sig"
 if [[ ! -f "$SIG_FILE" ]]; then
   echo "警告：未找到 $SIG_FILE，跳过 latest.json 生成。" >&2
@@ -70,7 +104,6 @@ if [[ ! -f "$SIG_FILE" ]]; then
 fi
 
 SIG="$(cat "$SIG_FILE")"
-VERSION="$(python3 -c "import json;print(json.load(open('src-tauri/tauri.conf.json'))['version'])")"
 NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 python3 - "$SIG" "$VERSION" "$NOW" <<'PY'

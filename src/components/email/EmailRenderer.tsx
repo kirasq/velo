@@ -128,22 +128,45 @@ export function EmailRenderer({
     );
 
     // Pass 2 — bare/relative inline image references (Content-Location hashes,
-    // filename tokens, etc.) that mailers use INSTEAD of cid:. These are not
-    // valid URLs and would otherwise resolve against the iframe origin and 404
-    // / "unsupported URL". Resolve to a data URI when we have the bytes;
-    // otherwise neutralize with a 1x1 placeholder. Runs unconditionally —
-    // emails routinely embed inline images keyed only by a bare token.
+    // filename tokens, srcset entries, etc.) that mailers use INSTEAD of cid:.
+    // These are not valid URLs and would otherwise resolve against the iframe
+    // origin and 404 / "unsupported URL". Resolve to a data URI when we have the
+    // bytes; otherwise neutralize with a 1x1 placeholder. Runs unconditionally.
+    //
+    // Covers both `src` and `srcset`, quoted and unquoted. The lookbehind
+    // `(?<=[\s<])` ensures we never touch `data-blocked-src` (set by
+    // stripRemoteImages when remote images are blocked). An empty `src=""`
+    // (also from stripRemoteImages) is left untouched so the unblock flow in
+    // restoreRemoteImages still works.
     body = body.replace(
-      /(<img\b[^>]*?\ssrc\s*=\s*)(["'])(.*?)\2/gi,
-      (full, pre: string, q: string, src: string) => {
-        const t = src.trim();
-        if (/^(https?:|data:|blob:|mailto:|#)/i.test(t)) return full;
+      /(?<=[\s<])(src|srcset)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>"']+))/gi,
+      (full, attr: string, dq: string | undefined, sq: string | undefined, uq: string | undefined) => {
+        const raw = dq ?? sq ?? uq ?? "";
+        const quote = dq !== undefined ? `"` : sq !== undefined ? `'` : "";
+        const keep = (v: string) => (quote ? `${attr}=${quote}${v}${quote}` : `${attr}=${v}`);
+
+        // srcset: comma/space-separated "url [descriptor]" candidates.
+        if (attr.toLowerCase() === "srcset") {
+          const replaced = raw
+            .split(",")
+            .map((part) => {
+              const url = part.trim().split(/\s+/)[0] ?? "";
+              const t = url.trim();
+              if (!t || /^(https?:|data:|blob:|cid:|mailto:|#)/i.test(t) || t.includes("/")) return part;
+              const dataUri = resolvedRefs.get(normalizeRef(t));
+              return url ? part.replace(url, dataUri ?? INLINE_PLACEHOLDER) : part;
+            })
+            .join(",");
+          return keep(replaced);
+        }
+
+        // src
+        const t = raw.trim();
+        if (!t) return full; // empty src from stripRemoteImages → leave for restore
+        if (/^(https?:|data:|blob:|cid:|mailto:|#)/i.test(t)) return full;
         if (t.includes("/")) return full; // path-relative remote; leave as-is
         const dataUri = resolvedRefs.get(normalizeRef(t));
-        if (dataUri) return `${pre}${q}${dataUri}${q}`;
-        // Unresolved inline/relative image → neutral 1x1 placeholder to avoid
-        // 404 / unsupported-URL console errors.
-        return `${pre}${q}${INLINE_PLACEHOLDER}${q}`;
+        return keep(dataUri ?? INLINE_PLACEHOLDER);
       },
     );
 
