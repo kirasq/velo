@@ -441,6 +441,7 @@ pub struct DavRequest {
 }
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DavResponse {
     pub status: u16,
     pub status_text: String,
