@@ -1032,7 +1032,7 @@ export function SettingsPage() {
 
                   <SendAsAliasesSection />
 
-                  <ImapCalDavSection />
+                  <MailCalDavSection />
 
                   <Section title={t("settings.googleApi.title")}>
                     <div className="space-y-3">
@@ -2183,7 +2183,7 @@ function ShortcutsTab() {
   );
 }
 
-function ImapCalDavSection() {
+function MailCalDavSection() {
   const accounts = useAccountStore((s) => s.accounts);
   const activeAccountId = useAccountStore((s) => s.activeAccountId);
   const [account, setAccount] = useState<import("@/services/db/accounts").DbAccount | null>(null);
@@ -2196,9 +2196,10 @@ function ImapCalDavSection() {
   }, [activeAccountId]);
 
   const activeUiAccount = accounts.find((a) => a.id === activeAccountId);
-  const isImap = activeUiAccount?.provider === "imap";
+  const isCalendarCapable =
+    activeUiAccount?.provider === "imap" || activeUiAccount?.provider === "pop3";
 
-  if (!isImap || !account) return null;
+  if (!isCalendarCapable || !account) return null;
 
   return (
     <Section title="Calendar (CalDAV)">
