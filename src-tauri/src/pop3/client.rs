@@ -556,6 +556,56 @@ pub fn parse_message(uidl: &str, raw: &[u8], attachment_dir: &str) -> Result<Pop
             content_location,
             is_inline,
             local_path,
+            is_calendar_invite: false,
+            calendar_data: None,
+        });
+    }
+
+    // --- Calendar invites -------------------------------------------------
+    // Meeting requests are usually sent as an inline `text/calendar;
+    // method=REQUEST` MIME part (no Content-Disposition: attachment), which
+    // mail-parser's `attachments()` drops. Walk every part and surface those
+    // as calendar-invite attachments so the UI can render an invite card.
+    // This mirrors the IMAP path in imap/client.rs.
+    for part in parsed.parts.iter() {
+        let ct = match part.content_type() {
+            Some(ct) => ct,
+            None => continue,
+        };
+        let ctype = ct.ctype().to_ascii_lowercase();
+        let subtype = ct.subtype().map(|s| s.to_ascii_lowercase()).unwrap_or_default();
+        let mime = format!("{ctype}/{subtype}");
+        let is_calendar_mime = mime == "text/calendar"
+            || mime == "application/ics"
+            || mime == "application/vnd.icalendar";
+        let name = part.attachment_name().map(|s| s.to_string());
+        let is_ics_file = name
+            .as_ref()
+            .map(|n| n.to_ascii_lowercase().ends_with(".ics"))
+            .unwrap_or(false)
+            && part
+                .content_disposition()
+                .map_or(false, |cd| cd.is_attachment());
+        if !is_calendar_mime && !is_ics_file {
+            continue;
+        }
+        // Skip if a part with the same name+size was already captured as a
+        // regular (disposition=attachment) attachment.
+        if attachments.iter().any(|a| {
+            a.filename == name.clone().unwrap_or_default() && a.size == part.len() as u32
+        }) {
+            continue;
+        }
+        attachments.push(Pop3Attachment {
+            filename: name.unwrap_or_else(|| "invite.ics".to_string()),
+            mime_type: mime,
+            size: part.len() as u32,
+            content_id: part.content_id().map(|s| s.to_string()),
+            content_location: part.content_location().map(|s| s.to_string()),
+            is_inline: part.content_disposition().map_or(false, |cd| cd.is_inline()),
+            local_path: None,
+            is_calendar_invite: true,
+            calendar_data: part.text_contents().map(|s| s.to_string()),
         });
     }
 

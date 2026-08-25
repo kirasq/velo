@@ -5,6 +5,7 @@ import { buildPop3Config } from "./pop3ConfigBuilder";
 import { getAccount } from "../db/accounts";
 import { upsertMessage } from "../db/messages";
 import { upsertAttachment } from "../db/attachments";
+import { persistInviteFromRawIcs } from "../calendar/inviteExtractor";
 import { upsertThread, setThreadLabels } from "../db/threads";
 import { withTransaction } from "../db/connection";
 import { appDataDir } from "@tauri-apps/api/path";
@@ -60,6 +61,8 @@ function pop3MessageToParsed(
       contentId: normalizeCid(att.content_id),
       contentLocation: att.content_location ?? null,
       isInline: att.is_inline,
+      isCalendarInvite: att.is_calendar_invite ?? false,
+      calendarData: att.calendar_data ?? null,
       localPath: att.local_path ?? null,
     };
   });
@@ -206,8 +209,21 @@ export async function pop3InitialSync(
               contentId: att.contentId,
               contentLocation: att.contentLocation,
               isInline: att.isInline,
+              isCalendarInvite: att.isCalendarInvite,
               localPath: att.localPath,
             });
+            if (att.isCalendarInvite && att.calendarData) {
+              try {
+                await persistInviteFromRawIcs({
+                  accountId,
+                  messageId: localId,
+                  threadId,
+                  rawIcs: att.calendarData,
+                });
+              } catch (e) {
+                console.error("Failed to persist calendar invite (pop3)", localId, e);
+              }
+            }
           } catch (e) {
             console.error("Failed to persist POP3 attachment", att.filename, e);
           }

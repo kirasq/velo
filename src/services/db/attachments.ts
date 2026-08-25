@@ -12,6 +12,7 @@ export interface DbAttachment {
   content_location: string | null;
   is_inline: number;
   local_path: string | null;
+  is_calendar_invite: number;
 }
 
 export async function upsertAttachment(att: {
@@ -26,14 +27,15 @@ export async function upsertAttachment(att: {
   contentLocation?: string | null;
   isInline: boolean;
   localPath?: string | null;
+  isCalendarInvite?: boolean;
 }): Promise<void> {
   const db = await getDb();
   await db.execute(
-    `INSERT INTO attachments (id, message_id, account_id, filename, mime_type, size, gmail_attachment_id, content_id, content_location, is_inline, local_path)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+    `INSERT INTO attachments (id, message_id, account_id, filename, mime_type, size, gmail_attachment_id, content_id, content_location, is_inline, local_path, is_calendar_invite)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
      ON CONFLICT(id) DO UPDATE SET
        filename = $4, mime_type = $5, size = $6,
-       gmail_attachment_id = $7, content_id = $8, content_location = $9, is_inline = $10, local_path = $11`,
+       gmail_attachment_id = $7, content_id = $8, content_location = $9, is_inline = $10, local_path = $11, is_calendar_invite = $12`,
     [
       att.id,
       att.messageId,
@@ -46,6 +48,7 @@ export async function upsertAttachment(att: {
       att.contentLocation ?? null,
       att.isInline ? 1 : 0,
       att.localPath ?? null,
+      att.isCalendarInvite ? 1 : 0,
     ],
   );
 }
@@ -62,6 +65,7 @@ export interface AttachmentWithContext {
   content_location: string | null;
   is_inline: number;
   local_path: string | null;
+  is_calendar_invite: number;
   from_address: string | null;
   from_name: string | null;
   date: number | null;

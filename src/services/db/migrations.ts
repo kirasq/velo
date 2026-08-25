@@ -795,6 +795,39 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_attachments_content_location ON attachments(content_location);
     `,
   },
+  {
+    version: 26,
+    description: "Calendar invites: flag invite attachments + dedicated invites table",
+    sql: `
+      ALTER TABLE attachments ADD COLUMN is_calendar_invite INTEGER DEFAULT 0;
+      CREATE INDEX IF NOT EXISTS idx_attachments_calendar_invite ON attachments(is_calendar_invite);
+
+      CREATE TABLE IF NOT EXISTS calendar_invites (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        account_id TEXT NOT NULL,
+        message_id TEXT,
+        thread_id TEXT,
+        uid TEXT NOT NULL,
+        method TEXT,
+        sequence INTEGER DEFAULT 0,
+        summary TEXT,
+        description TEXT,
+        location TEXT,
+        start_time TEXT,
+        end_time TEXT,
+        is_all_day INTEGER DEFAULT 0,
+        organizer_email TEXT,
+        organizer_name TEXT,
+        attendees_json TEXT,
+        ical_data TEXT,
+        rsvp_status TEXT DEFAULT 'needs-action',
+        created_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(account_id, uid, method)
+      );
+      CREATE INDEX IF NOT EXISTS idx_calendar_invites_account ON calendar_invites(account_id);
+      CREATE INDEX IF NOT EXISTS idx_calendar_invites_message ON calendar_invites(message_id);
+    `,
+  },
 ];
 
 /**

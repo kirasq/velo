@@ -19,6 +19,7 @@ import type { SyncResult } from "../email/types";
 import { upsertMessage, updateMessageThreadIds } from "../db/messages";
 import { upsertThread, setThreadLabels, deleteThread } from "../db/threads";
 import { upsertAttachment } from "../db/attachments";
+import { persistInviteFromRawIcs } from "../calendar/inviteExtractor";
 import { getAccount, updateAccountSyncState } from "../db/accounts";
 import { withTransaction } from "../db/connection";
 import {
@@ -158,6 +159,8 @@ export function imapMessageToParsedMessage(
     contentId: att.content_id,
     contentLocation: att.content_location ?? null,
     isInline: att.is_inline,
+    isCalendarInvite: att.is_calendar_invite,
+    calendarData: att.calendar_data ?? null,
   }));
 
   const parsed: ParsedMessage = {
@@ -335,7 +338,20 @@ async function storeThreadsAndMessages(
               contentId: att.contentId,
               contentLocation: att.contentLocation,
               isInline: att.isInline,
+              isCalendarInvite: att.isCalendarInvite ?? false,
             });
+            if (att.isCalendarInvite && att.calendarData) {
+              try {
+                await persistInviteFromRawIcs({
+                  accountId,
+                  messageId: parsed.id,
+                  threadId: parsed.threadId,
+                  rawIcs: att.calendarData,
+                });
+              } catch (e) {
+                console.error("Failed to persist calendar invite (imap)", parsed.id, e);
+              }
+            }
           }
 
           storedMessages.push(parsed);
@@ -604,7 +620,20 @@ export async function imapInitialSync(
                   contentId: att.contentId,
                   contentLocation: att.contentLocation,
                   isInline: att.isInline,
+                  isCalendarInvite: att.isCalendarInvite ?? false,
                 });
+                if (att.isCalendarInvite && att.calendarData) {
+                  try {
+                    await persistInviteFromRawIcs({
+                      accountId,
+                      messageId: parsed.id,
+                      threadId: parsed.threadId,
+                      rawIcs: att.calendarData,
+                    });
+                  } catch (e) {
+                    console.error("Failed to persist calendar invite (imap)", parsed.id, e);
+                  }
+                }
               }
             }
           });

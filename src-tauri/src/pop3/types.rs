@@ -85,6 +85,15 @@ pub struct Pop3Attachment {
     /// Stored so the renderer can resolve those references to inline data.
     pub content_location: Option<String>,
     pub is_inline: bool,
+    /// True when this part is a calendar invitation (`text/calendar` / `.ics`),
+    /// even though it is not a conventional (disposition=attachment) attachment.
+    /// mail-parser's `attachments()` filters these out, so we surface them
+    /// separately to let the UI render an invite card.
+    pub is_calendar_invite: bool,
+    /// Decoded text/calendar payload (RFC 5545 ICS text). Only populated when
+    /// `is_calendar_invite` is true, so the TS layer can store the invite
+    /// without a second fetch.
+    pub calendar_data: Option<String>,
     /// Absolute path on disk where the decoded attachment bytes are stored.
     /// `None` when disk persistence failed or attachments are not saved locally.
     pub local_path: Option<String>,

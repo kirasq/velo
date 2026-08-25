@@ -22,6 +22,10 @@ export interface CalendarEventData {
   attendeesJson: string | null;
   htmlLink: string | null;
   icalData: string | null;
+  /** ITIP method from the enclosing VCALENDAR (REQUEST / REPLY / CANCEL). */
+  method?: string | null;
+  /** iCalendar SEQUENCE — higher means a newer version of the same invite. */
+  sequence?: number;
 }
 
 export interface CreateEventInput {

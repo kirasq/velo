@@ -65,6 +65,8 @@ export function parseVEvent(icalData: string, href?: string): CalendarEventData 
   let status = "confirmed";
   let organizerEmail: string | null = null;
   let isAllDay = false;
+  let method: string | null = null;
+  let sequence = 0;
   const attendees: { email: string; displayName?: string; responseStatus?: string }[] = [];
 
   for (const line of lines) {
@@ -76,6 +78,14 @@ export function parseVEvent(icalData: string, href?: string): CalendarEventData 
     const params = nameParts.slice(1).join(";").toUpperCase();
 
     switch (propName) {
+      case "METHOD":
+        // METHOD lives in VCALENDAR scope, not VEVENT, but capturing it here is
+        // harmless and lets single-VEVENT snippets report it.
+        method = value.toUpperCase();
+        break;
+      case "SEQUENCE":
+        sequence = parseInt(value, 10) || 0;
+        break;
       case "UID":
         uid = value;
         break;
@@ -139,6 +149,8 @@ export function parseVEvent(icalData: string, href?: string): CalendarEventData 
     attendeesJson: attendees.length > 0 ? JSON.stringify(attendees) : null,
     htmlLink: null,
     icalData,
+    method,
+    sequence,
   };
 }
 

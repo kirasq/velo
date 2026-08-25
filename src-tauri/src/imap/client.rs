@@ -1667,7 +1667,7 @@ fn parse_message(
     );
 
     // Attachments
-    let attachments: Vec<ImapAttachment> = message
+    let mut attachments: Vec<ImapAttachment> = message
         .attachments
         .iter()
         .filter_map(|&part_idx| {
@@ -1703,9 +1703,68 @@ fn parse_message(
                 content_id: att.content_id().map(|s| s.to_string()),
                 content_location: att.content_location().map(|s| s.to_string()),
                 is_inline: att.content_disposition().map_or(false, |cd| cd.is_inline()),
+                is_calendar_invite: false,
+                calendar_data: None,
             })
         })
         .collect();
+
+    // --- Calendar invites -------------------------------------------------
+    // meeting requests are usually sent as an inline `text/calendar;
+    // method=REQUEST` MIME part (no Content-Disposition: attachment), which
+    // mail-parser's `attachments()` drops. Walk every part and surface those
+    // as calendar-invite attachments so the UI can render an invite card.
+    // This is additive only — it never touches the inline-image path above.
+    let mut calendar_invites: Vec<ImapAttachment> = Vec::new();
+    let mut seen_sections = std::collections::HashSet::new();
+    for (part_idx, section) in section_map.iter() {
+        if seen_sections.contains(section) {
+            continue;
+        }
+        let att = match message.parts.get(*part_idx) {
+            Some(p) => p,
+            None => continue,
+        };
+        let ct = match att.content_type() {
+            Some(ct) => ct,
+            None => continue,
+        };
+        let ctype = ct.ctype().to_ascii_lowercase();
+        let subtype = ct.subtype().map(|s| s.to_ascii_lowercase()).unwrap_or_default();
+        let mime = format!("{ctype}/{subtype}");
+        let is_calendar_mime = mime == "text/calendar"
+            || mime == "application/ics"
+            || mime == "application/vnd.icalendar";
+        let is_ics_file = att
+            .attachment_name()
+            .map(|n| n.to_ascii_lowercase().ends_with(".ics"))
+            .unwrap_or(false)
+            && att.content_disposition().map_or(false, |cd| cd.is_attachment());
+        if !is_calendar_mime && !is_ics_file {
+            continue;
+        }
+        // Skip if this exact section was already captured as a regular
+        // attachment (e.g. an .ics sent with disposition=attachment).
+        if attachments.iter().any(|a| &a.part_id == section) {
+            continue;
+        }
+        seen_sections.insert(section.clone());
+        calendar_invites.push(ImapAttachment {
+            part_id: section.clone(),
+            filename: att
+                .attachment_name()
+                .unwrap_or("invite.ics")
+                .to_string(),
+            mime_type: mime,
+            size: att.len() as u32,
+            content_id: att.content_id().map(|s| s.to_string()),
+            content_location: att.content_location().map(|s| s.to_string()),
+            is_inline: att.content_disposition().map_or(false, |cd| cd.is_inline()),
+            is_calendar_invite: true,
+            calendar_data: att.text_contents().map(|s| s.to_string()),
+        });
+    }
+    attachments.extend(calendar_invites);
 
     Ok(ImapMessage {
         uid,

@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, Fragment } from "react";
 import { MessageItem } from "./MessageItem";
 import { ActionBar } from "./ActionBar";
 import { getMessagesForThread, type DbMessage } from "@/services/db/messages";
@@ -22,6 +22,9 @@ import { AiTaskExtractDialog } from "@/components/tasks/AiTaskExtractDialog";
 import { ErrorBoundary } from "@/components/ui/ErrorBoundary";
 import { MessageSkeleton } from "@/components/ui/Skeleton";
 import { RawMessageModal } from "./RawMessageModal";
+import { getAttachmentsForMessage } from "@/services/db/attachments";
+import { getInviteByMessage, type DbCalendarInvite } from "@/services/db/calendarInvites";
+import { MeetingInviteCard } from "./MeetingInviteCard";
 
 interface ThreadViewProps {
   thread: Thread;
@@ -426,17 +429,21 @@ export function ThreadView({ thread }: ThreadViewProps) {
         <div className="flex-1 overflow-y-auto">
           <ErrorBoundary name="MessageList">
             {messages.map((msg, i) => (
-              <MessageItem
-                key={msg.id}
-                ref={(el) => { messageRefs.current[i] = el; }}
-                message={msg}
-                isLast={i === messages.length - 1}
-                focused={i === focusedMsgIdx}
-                blockImages={blockImages}
-                senderAllowlisted={msg.from_address ? allowlistedSenders.has(msg.from_address) : false}
-                isSpam={thread.labelIds.includes("SPAM")}
-                onContextMenu={(e) => handleMessageContextMenu(e, msg)}
-              />
+              <Fragment key={msg.id}>
+                {activeAccountId && (
+                  <MessageInviteBanner accountId={activeAccountId} messageId={msg.id} />
+                )}
+                <MessageItem
+                  ref={(el) => { messageRefs.current[i] = el; }}
+                  message={msg}
+                  isLast={i === messages.length - 1}
+                  focused={i === focusedMsgIdx}
+                  blockImages={blockImages}
+                  senderAllowlisted={msg.from_address ? allowlistedSenders.has(msg.from_address) : false}
+                  isSpam={thread.labelIds.includes("SPAM")}
+                  onContextMenu={(e) => handleMessageContextMenu(e, msg)}
+                />
+              </Fragment>
             ))}
           </ErrorBoundary>
 
@@ -513,6 +520,40 @@ export function ThreadView({ thread }: ThreadViewProps) {
       )}
     </div>
   );
+}
+
+/**
+ * Renders a meeting-invite card above a message when that message carries a
+ * calendar invitation attachment. The invite is resolved from the local
+ * `calendar_invites` table (populated during mail sync), so no network fetch
+ * is needed at view time.
+ */
+function MessageInviteBanner({ accountId, messageId }: { accountId: string; messageId: string }) {
+  const [inviteRow, setInviteRow] = useState<DbCalendarInvite | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const atts = await getAttachmentsForMessage(accountId, messageId);
+        const cal = atts.find((a) => a.is_calendar_invite === 1);
+        if (!cal) {
+          if (!cancelled) setInviteRow(null);
+          return;
+        }
+        const row = await getInviteByMessage(accountId, messageId);
+        if (!cancelled) setInviteRow(row);
+      } catch (e) {
+        console.error("Failed to load meeting invite", messageId, e);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [accountId, messageId]);
+
+  if (!inviteRow) return null;
+  return <MeetingInviteCard inviteRow={inviteRow} accountId={accountId} />;
 }
 
 function buildQuote(msg: DbMessage): string {

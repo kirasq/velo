@@ -11,6 +11,10 @@ export interface ParsedAttachment {
   localPath?: string | null;
   /** Content-Location header value (bare URI/token) for inline image refs. */
   contentLocation?: string | null;
+  /** True when this part is a calendar invitation (text/calendar / .ics). */
+  isCalendarInvite?: boolean;
+  /** Decoded text/calendar payload (ICS text), when isCalendarInvite. */
+  calendarData?: string | null;
 }
 
 export interface ParsedMessage {

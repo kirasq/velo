@@ -58,6 +58,10 @@ export interface ImapAttachment {
   /** Content-Location header value (bare URI/token) for inline image refs. */
   content_location: string | null;
   is_inline: boolean;
+  /** True when this part is a calendar invitation (text/calendar / .ics). */
+  is_calendar_invite: boolean;
+  /** Decoded text/calendar payload (ICS text), when is_calendar_invite. */
+  calendar_data: string | null;
 }
 
 export interface ImapFolderStatus {
